@@ -68,11 +68,13 @@ test('the list: every rule, what applies HERE first and biggest first, and a cla
   assert.deepEqual(lanes['sql.dialect-path'], ['sql', 'classifies']);
   assert.deepEqual(lanes['table.join-table'], ['sql', 'classifies'], 'it reads table and column names, whichever lane declared them');
   assert.deepEqual(lanes['prisma.operation'], ['ts', 'links']);
+  assert.deepEqual(lanes['web.wrapper-hop'], ['web', 'classifies'], 'it says what a wrapper step does; the lane draws the links');
 });
 
 test('the list narrows by what applies here, by lane, by kind and by a word, and says why an empty list is empty', () => {
   assert.deepEqual(ask({ here: true }).answer.rules.map((x) => x.id), ['nestjs.routes', 'prisma.client', 'prisma.operations']);
   assert.ok(ask({ lane: 'java' }).answer.rules.every((x) => x.lane === 'java'));
+  assert.deepEqual(ask({ lane: 'web' }).answer.rules.map((x) => x.id), ['vben-admin.request']);
   assert.deepEqual(ask({ kind: 'prisma.operation' }).answer.rules.map((x) => x.id), ['prisma.operations']);
   assert.deepEqual(ask({ query: 'NESTJS HTTP CONTROLLERS' }).answer.rules.map((x) => x.id), [], 'a word of the pack\'s description is not the rule\'s');
   assert.deepEqual(ask({ query: '@CONTROLLER(PATH)' }).answer.rules.map((x) => x.id), ['nestjs.routes'], 'any case, and the rule\'s own description');
@@ -128,7 +130,7 @@ test('the catalog publishes the tool with its arguments, and the project routing
   const t = toolList().tools.find((x) => x.name === 'rules');
   assert.ok(t, 'rules is in tools/list');
   assert.deepEqual(Object.keys(t.inputSchema.properties).sort(), ['here', 'kind', 'lane', 'limit', 'offset', 'project', 'query', 'rule']);
-  assert.deepEqual(t.inputSchema.properties.lane.enum, ['java', 'ts', 'sql']);
+  assert.deepEqual(t.inputSchema.properties.lane.enum, ['java', 'ts', 'sql', 'web']);
 });
 
 test('GET /api/rules/examples answers whether each example holds, and a server that runs none says so', () => {

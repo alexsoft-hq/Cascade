@@ -26,6 +26,7 @@ import { routeMatches } from '../http_routes.mjs';
 import { isComponentFile, memberIndex, webEndpointId, webSymbolId } from './symbols.mjs';
 import { TEMPLATE_PREFIX } from './prefix.mjs';
 import { UNSETTLED_BECAUSE, walkChain } from './chain.mjs';
+import { namedHopsOf } from '../../core/rules/kinds/web_wrapper_hop.mjs';
 import { gatewayRouteOf } from '../../core/profile.mjs';
 import { routeAddressOf } from '../../core/walks.mjs';
 import {
@@ -403,6 +404,21 @@ function wrapperKindOf(key, memberRec) {
 }
 
 /**
+ * THE STEPS A RULE PACK NAMES (`web.wrapper-hop`), marked on the wrapper map:
+ * a step of the class the rule's shape found, that calls the rule's client
+ * through an instance the class itself holds. The chain walk reads such a step
+ * as the rule says (named_hop.mjs); any other step is read as its code reads.
+ */
+function markNamedSteps(wrappers, records, hopRules) {
+  for (const [key, named] of namedHopsOf(records, hopRules)) {
+    const w = wrappers.get(key);
+    const own = key.slice(0, key.lastIndexOf('.') + 1);
+    if (!w || w.sink.kind !== 'library' || w.sink.module !== named.hop.client.module) continue;
+    if (typeof w.sink.instance === 'string' && w.sink.instance.startsWith(own)) wrappers.set(key, { ...w, named });
+  }
+}
+
+/**
  * B4: the wrapper fixpoint.
  *
  * A WRAPPER is a function that hands a request on without knowing which one:
@@ -413,7 +429,7 @@ function wrapperKindOf(key, memberRec) {
  * @returns {{wrappers:Map, calleeTarget:Function, sinkVerb:Function, platformOf:Function}}
  */
 export function traceWrappers({
-  fileNames, files, libraries, pack, packageOf, resolver, stats,
+  fileNames, files, libraries, pack, packageOf, resolver, stats, records = [], hopRules = [],
 }) {
   const calleeTarget = makeCalleeTarget({ libraries, packageOf, resolver, members: memberIndex(files) });
   const sinkVerb = makeSinkVerb(libraries);
@@ -438,6 +454,7 @@ export function traceWrappers({
   }
   // Which calls lead on is read once more against the settled map.
   for (const key of [...wrappers.keys()]) wrappers.set(key, wrapperStep(ctx, key) ?? wrappers.get(key));
+  markNamedSteps(wrappers, records, hopRules);
   stats.wrappers.count = wrappers.size;
   for (const [key, w] of wrappers) {
     stats.wrappers.maxDepth = Math.max(stats.wrappers.maxDepth, w.depth);
@@ -756,7 +773,7 @@ function stepsOf(wrappers, key) {
   for (let cur = key, i = 0; cur && i < FIXPOINT_LIMIT; i += 1) {
     const w = wrappers.get(cur);
     if (!w) break;
-    steps.push({ key: cur, hops: w.hops ?? [{ call: w.call ?? null, verb: w.verb ?? null }], forks: w.forks ?? 0, last: !w.next });
+    steps.push({ key: cur, hops: w.hops ?? [{ call: w.call ?? null, verb: w.verb ?? null }], forks: w.forks ?? 0, last: !w.next, named: w.named ?? null });
     cur = w.next ?? null;
   }
   return steps;
@@ -791,11 +808,20 @@ function walkThrough(wrappers, key, c, clientKeys, stats) {
     return { reached: true, why: null, methods: [written.length > 0 ? { value: written[written.length - 1].value, from: 'wrapper-verb' } : own] };
   }
   const via = walkChain(stepsOf(wrappers, key), c, clientKeys(wrappers.get(key).sink));
+  countNamed(stats, via);
   if (via.reached && via.why) {
     stats.calls.urlThroughUnreadHop += 1;
     stats.calls.unreadHopBy[via.why.why] = (stats.calls.unreadHopBy[via.why.why] ?? 0) + 1;
   }
   return via;
+}
+
+/** A call through a step a rule pack names, counted by the rule, and whether the rule settled it. */
+function countNamed(stats, via) {
+  if (!via.reached || !via.named) return;
+  const rule = via.named[0].rule;
+  const n = stats.calls.throughNamedStep[rule] ?? { calls: 0, settled: 0 };
+  stats.calls.throughNamedStep[rule] = { calls: n.calls + 1, settled: n.settled + (via.why ? 0 : 1) };
 }
 
 /**
@@ -1012,7 +1038,38 @@ function wrapperSink(wrappers, key, via) {
     kind: 'wrapper', module: w.sink.module, instance: w.sink.instance, chain: chain.reverse(), depth: w.depth,
     methods: via.methods, ...(via.base ? { base: via.base } : {}),
     ...(via.why ? { unsettled: { ...via.why, reason: UNSETTLED_BECAUSE[via.why.why] } } : {}),
+    ...namedSinkOf(via),
   };
+}
+
+/**
+ * The step a rule pack named on the way (the edge says which rule and which
+ * step), and, where the rule says the step puts a prefix the request options
+ * decide before the URL, the rule and those option keys: the call is then
+ * placed behind that prefix, not the client's own (prefix.mjs).
+ */
+function namedSinkOf(via) {
+  const m = via.named ? via.named[0] : null;
+  if (!m) return {};
+  return { hop: { rule: m.rule, step: m.step }, ...(m.prefix ? { hopPrefix: { rule: m.rule, by: m.prefix } } : {}) };
+}
+
+/**
+ * THE CLIENT INSTANCE A SITE'S PREFIX IS DECIDED FOR: the one it reached, or the
+ * package's own when it reached none. Behind a prefix a named step puts before
+ * the URL, it is that step's instance of the client: the same client, whose
+ * prefix no source here states (prefix.mjs), so it is registered beside it.
+ */
+function siteInstanceOf(sink, pkg, instanceOf) {
+  const own = sink.instance ?? `${pkg}#(package)`;
+  if (!instanceOf.has(own)) instanceOf.set(own, { id: own, module: sink.module, baseURL: null, package: pkg });
+  const p = sink.hopPrefix;
+  if (!p) return own;
+  const id = `${own}+${p.rule}`;
+  if (!instanceOf.has(id)) {
+    instanceOf.set(id, { id, module: sink.module, baseURL: null, package: instanceOf.get(own).package ?? pkg, hop: { rule: p.rule, by: p.by, of: own } });
+  }
+  return id;
 }
 
 /**
@@ -1131,10 +1188,7 @@ export function classifyCallSites({
       const { sink, target } = found;
       stats.calls.withUrl += 1;
       countUrlCensus(stats, resolved, substituted, u.guess);
-      const instanceId = sink.instance ?? `${pkg}#(package)`;
-      if (!instanceOf.has(instanceId)) {
-        instanceOf.set(instanceId, { id: instanceId, module: sink.module, baseURL: null, package: pkg });
-      }
+      const instanceId = siteInstanceOf(sink, pkg, instanceOf);
       sites.push({
         file, pkg, call: c, target, instanceId, ...methodsAndBase(c, sink, methodsFor(c, sink, target), deps.clientKeys),
         assumed: (target && target.assumed === true) || u.assumed,
@@ -1189,6 +1243,7 @@ function fullUrlOf(written, { prefix, absolute, gatewayRoutes, gatewayKeys }) {
   let prefixEvidence = {
     value: prefix.value, from: prefix.from,
     ...(prefix.guess ? { guess: prefix.guess } : {}), ...(prefix.reads ? { reads: prefix.reads } : {}),
+    ...(prefix.hop ? { hop: prefix.hop } : {}),
   };
   // WHICH SERVICE ANSWERS THIS CALL, when the declared route names one. A
   // gateway route table says both halves — the prefix a request is forwarded
@@ -1227,7 +1282,7 @@ function noteCaller(site, nodesToAdd, files) {
 function sinkEvidence(sink) {
   return {
     kind: sink.kind, module: sink.module, instance: sink.instance, chain: sink.chain, depth: sink.depth, ...typedOf(sink),
-    ...(sink.unsettled ? { unsettled: sink.unsettled } : {}),
+    ...(sink.unsettled ? { unsettled: sink.unsettled } : {}), ...(sink.hop ? { hop: sink.hop } : {}),
   };
 }
 

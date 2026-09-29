@@ -1081,8 +1081,13 @@ function webAxis(web) {
   // an empty string by default. Both reshape every edge of that package, which
   // is why they and not the per-edge weaknesses decide the axis.
   const autoPrefixes = [];
+  const hopPrefixes = [];
   for (const [dir, p] of Object.entries(web.prefix ?? {})) {
-    for (const i of p.instances ?? []) if (i.from === 'auto' || i.from === 'none') autoPrefixes.push(dir || '.');
+    for (const i of p.instances ?? []) {
+      if (i.from !== 'auto' && i.from !== 'none') continue;
+      // Behind a wrapper step a rule pack names, the prefix is that step's (V5).
+      if (i.hop) hopPrefixes.push({ dir: dir || '.', hop: i.hop }); else autoPrefixes.push(dir || '.');
+    }
   }
   const assumedAliases = web.assumedAliases ?? 0;
   if (resolved === null) {
@@ -1116,6 +1121,7 @@ function webAxis(web) {
     const dirs = [...new Set(autoPrefixes)].sort();
     why.push(`prefix chosen by match count for ${dirs.join(', ')}: declare gatewayRoutes {"<front>": "<back>"}`);
   }
+  why.push(...hopPrefixWhy(hopPrefixes));
   if (assumedAliases > 0) why.push(`alias @ assumed as src, on ${assumedAliases} call(s)`);
   why.push(...baseUrlGuesses(web));
   if (mostlyUntraced(calls, untraced)) {
@@ -1127,9 +1133,21 @@ function webAxis(web) {
     status: 'degraded',
     reason: `${inPack} frontend call(s) reached a route this pack serves, and part of that rested on a guess or on calls traced to no client: ${why.join('; ')}. `
       + 'Every edge that rests on one is graded HEURISTIC, so a conservative answer leaves it out',
-    causes: webCauses(web, { autoPrefixes, assumedAliases, untraced: mostlyUntraced(calls, untraced) }),
+    causes: webCauses(web, { autoPrefixes: [...autoPrefixes, ...hopPrefixes], assumedAliases, untraced: mostlyUntraced(calls, untraced) }),
     ...notes,
   };
+}
+
+/**
+ * A PREFIX A NAMED WRAPPER STEP PUTS BEFORE THE URL (V5): a rule pack says the
+ * step's request options decide it, and no source here states them, so the
+ * front of the URL is not known and only `"*"` can declare what reaches the
+ * server. One sentence per rule and package.
+ */
+function hopPrefixWhy(hopPrefixes) {
+  const said = new Set(hopPrefixes.map((h) => `prefix a wrapper step the rule ${h.hop.rule} names puts before the URL, from its request options `
+    + `(${h.hop.by.join(', ')}), which no source read states, for ${h.dir}: declare gatewayRoutes {"*": "<back>"}`));
+  return [...said].sort();
 }
 
 /**

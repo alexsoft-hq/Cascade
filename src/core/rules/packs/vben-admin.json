@@ -1,0 +1,198 @@
+{
+  "pack": "vben-admin",
+  "version": 1,
+  "description": "vue-vben-admin's HTTP client: the class its template ships in src/utils/http/axios/Axios.ts, whose request method hands a copy of the request through the template's hooks to the axios instance it holds.",
+  "rules": [
+    {
+      "id": "vben-admin.request",
+      "kind": "web.wrapper-hop",
+      "description": "A class that holds an axios instance built by axios.create in a field and declares vue-vben-admin's client methods (getTransform, setupInterceptors, supportFormData, uploadFile, get, post, put, delete, request) is that framework's client, whatever it is called. Its request(config, options) step hands the request it is given at config on to the axios instance: it copies it, lets the transform's beforeRequestHook return it again, writes requestOptions on it and lets supportFormData rewrite its body. So the method and the base URL arrive as the caller gave them, and the URL arrives behind a prefix the request options decide (apiUrl, and urlPrefix when joinPrefix; the instance's own, which a call's options at options may set), followed by the params when they are text (the restful style), with a query string added (joinTime, joinParamsToUrl). Which prefix that is, is not read: the prefix of every call through this step is chosen by match count, and HEURISTIC, until the profile's gatewayRoutes declares it. A call whose options may set one of those keys, or whose params may be text, is not settled. Any other step of the class (uploadFile, a method a project adds) is read as its code reads.",
+      "why": "jeecg-boot's frontend (jeecgboot-vue3) sends 800 calls through its copy of this class, and its request method passes the request through a local the hooks assign again, which the lane's default-deny reading rightly cannot settle: every one of those calls was HEURISTIC and named that step. The hooks it runs are the framework template's, written into the project's own src/utils/http/axios/index.ts; a project whose hook does more to the URL than a prefix, text params and a query string is not what this rule describes.",
+      "params": {
+        "client": {
+          "module": "axios",
+          "factory": "create"
+        },
+        "class": {
+          "methods": [
+            "getTransform",
+            "setupInterceptors",
+            "supportFormData",
+            "uploadFile",
+            "get",
+            "post",
+            "put",
+            "delete",
+            "request"
+          ]
+        },
+        "hop": {
+          "method": "request",
+          "config": 0,
+          "options": 1
+        },
+        "keys": {
+          "url": [
+            {
+              "does": "prefix",
+              "by": [
+                "apiUrl",
+                "urlPrefix",
+                "joinPrefix"
+              ]
+            },
+            {
+              "does": "append",
+              "from": "params",
+              "when": "text"
+            },
+            {
+              "does": "query",
+              "by": [
+                "joinTime",
+                "joinParamsToUrl"
+              ]
+            }
+          ],
+          "method": [
+            {
+              "does": "keep"
+            }
+          ],
+          "baseURL": [
+            {
+              "does": "keep"
+            }
+          ],
+          "params": [
+            {
+              "does": "change",
+              "by": [
+                "joinTime",
+                "formatDate"
+              ]
+            }
+          ],
+          "data": [
+            {
+              "does": "change",
+              "by": [
+                "formatDate"
+              ]
+            }
+          ],
+          "headers": [
+            {
+              "does": "set"
+            }
+          ]
+        },
+        "framework": {
+          "name": "vue-vben-admin (vben admin 2.x), src/utils/http/axios",
+          "declares": "VAxios.request(config, options): conf = cloneDeep(config); opt = Object.assign({}, this.options.requestOptions, options); conf = transform.beforeRequestHook(conf, opt) when the transform has one; conf.requestOptions = opt; conf = this.supportFormData(conf), which returns conf or { ...conf, data: qs.stringify(conf.data) }; then this.axiosInstance.request(conf). get, post, put and delete call this.request({ ...config, method: VERB }, options). The template's beforeRequestHook sets config.url to urlPrefix + url when joinPrefix and to apiUrl + url when apiUrl is set, appends params to the url when params is a string (config.url + params, with a timestamp for GET when joinTime), adds a timestamp param for GET (joinTime), formats dates in params and data (formatDate), moves params to data for a non-GET call without data, and with joinParamsToUrl sets the url to setObjToUrlParams(url, params and data), which adds a query string. requestInterceptors sets headers.",
+          "source": "jeecg-boot's copy of the framework, jeecgboot-vue3/src/utils/http/axios/Axios.ts (class VAxios) and index.ts (transform.beforeRequestHook, createAxios), at jeecgboot/JeecgBoot 7436405; not checked against the upstream vue-vben-admin repository"
+        }
+      },
+      "examples": [
+        {
+          "files": [
+            {
+              "name": "src/http/Axios.ts",
+              "text": "import axios from 'axios';\nimport { cloneDeep } from 'lodash-es';\n\nexport class VAxios {\n  private axiosInstance;\n  private readonly options;\n  constructor(options) {\n    this.options = options;\n    this.axiosInstance = axios.create(options);\n    this.setupInterceptors();\n  }\n  private getTransform() {\n    const { transform } = this.options;\n    return transform;\n  }\n  private setupInterceptors() {\n    const transform = this.getTransform();\n    if (transform && transform.requestInterceptors) {\n      this.axiosInstance.interceptors.request.use((config) => transform.requestInterceptors(config, this.options));\n    }\n  }\n  uploadFile(config, params) {\n    const formData = new window.FormData();\n    formData.append(params.name || 'file', params.file);\n    return this.axiosInstance.request({ ...config, method: 'POST', data: formData });\n  }\n  supportFormData(config) {\n    return config;\n  }\n  get(config, options) {\n    return this.request({ ...config, method: 'GET' }, options);\n  }\n  post(config, options) {\n    return this.request({ ...config, method: 'POST' }, options);\n  }\n  put(config, options) {\n    return this.request({ ...config, method: 'PUT' }, options);\n  }\n  delete(config, options) {\n    return this.request({ ...config, method: 'DELETE' }, options);\n  }\n  request(config, options) {\n    let conf = cloneDeep(config);\n    const transform = this.getTransform();\n    const { requestOptions } = this.options;\n    const opt = Object.assign({}, requestOptions, options);\n    const { beforeRequestHook } = transform || {};\n    if (beforeRequestHook) {\n      conf = beforeRequestHook(conf, opt);\n    }\n    conf.requestOptions = opt;\n    conf = this.supportFormData(conf);\n    return this.axiosInstance.request(conf);\n  }\n}\n"
+            },
+            {
+              "name": "src/api.ts",
+              "text": "import { VAxios } from './http/Axios';\n\nconst http = new VAxios({ transform: {}, requestOptions: { joinPrefix: true } });\n\nexport const list = () => http.get({ url: '/user/list' });\nexport const byPage = () => http.get({ url: '/user/list', params: { pageNo: 1 } }, { joinTime: false });\nexport const add = (params) => http.post({ url: '/user/add', params });\nexport const elsewhere = () => http.get({ url: '/user/list' }, { apiUrl: '/other' });\nexport const unread = (o) => http.get({ url: '/user/list' }, o);\n"
+            }
+          ],
+          "routes": [
+            "GET /user/list",
+            "POST /user/add"
+          ],
+          "expect": {
+            "hops": [
+              "src/http/Axios.ts#VAxios.request"
+            ],
+            "calls": {
+              "list": {
+                "to": "GET /user/list",
+                "unsettled": null,
+                "prefix": "auto"
+              },
+              "byPage": {
+                "to": "GET /user/list",
+                "unsettled": null
+              },
+              "add": {
+                "to": "POST /user/add",
+                "unsettled": "hop-append"
+              },
+              "elsewhere": {
+                "to": "GET /user/list",
+                "unsettled": "hop-option"
+              },
+              "unread": {
+                "to": "GET /user/list",
+                "unsettled": "hop-option"
+              }
+            }
+          },
+          "why": "the step is settled: the verb and the path arrive, behind a prefix the options decide, which is chosen by match count until it is declared. Params written as an object and options that name no key of the prefix change nothing; params that may be text, and options that set or may set the prefix, leave the call unsettled"
+        },
+        {
+          "files": [
+            {
+              "name": "src/http/Axios.ts",
+              "text": "import axios from 'axios';\nimport { cloneDeep } from 'lodash-es';\n\nexport class RequestClient {\n  private axiosInstance;\n  private readonly options;\n  constructor(options) {\n    this.options = options;\n    this.axiosInstance = axios.create(options);\n    this.setupInterceptors();\n  }\n  private getTransform() {\n    const { transform } = this.options;\n    return transform;\n  }\n  private setupInterceptors() {\n    const transform = this.getTransform();\n    if (transform && transform.requestInterceptors) {\n      this.axiosInstance.interceptors.request.use((config) => transform.requestInterceptors(config, this.options));\n    }\n  }\n  uploadFile(config, params) {\n    const formData = new window.FormData();\n    formData.append(params.name || 'file', params.file);\n    return this.axiosInstance.request({ ...config, method: 'POST', data: formData });\n  }\n  supportFormData(config) {\n    return config;\n  }\n  get(config, options) {\n    return this.request({ ...config, method: 'GET' }, options);\n  }\n  post(config, options) {\n    return this.request({ ...config, method: 'POST' }, options);\n  }\n  put(config, options) {\n    return this.request({ ...config, method: 'PUT' }, options);\n  }\n  delete(config, options) {\n    return this.request({ ...config, method: 'DELETE' }, options);\n  }\n  request(config, options) {\n    let conf = cloneDeep(config);\n    const transform = this.getTransform();\n    const { requestOptions } = this.options;\n    const opt = Object.assign({}, requestOptions, options);\n    const { beforeRequestHook } = transform || {};\n    if (beforeRequestHook) {\n      conf = beforeRequestHook(conf, opt);\n    }\n    conf.requestOptions = opt;\n    conf = this.supportFormData(conf);\n    return this.axiosInstance.request(conf);\n  }\n}\n"
+            },
+            {
+              "name": "src/api.ts",
+              "text": "import { RequestClient } from './http/Axios';\n\nconst http = new RequestClient({});\n\nexport const list = () => http.delete({ url: '/user/delete' });\n"
+            }
+          ],
+          "routes": [
+            "DELETE /user/delete"
+          ],
+          "expect": {
+            "hops": [
+              "src/http/Axios.ts#RequestClient.request"
+            ],
+            "calls": {
+              "list": {
+                "to": "DELETE /user/delete",
+                "unsettled": null
+              }
+            }
+          },
+          "why": "the class is known by its shape, not by its name"
+        },
+        {
+          "files": [
+            {
+              "name": "src/http/Axios.ts",
+              "text": "import axios from 'axios';\nimport { cloneDeep } from 'lodash-es';\n\nexport class VAxios {\n  private axiosInstance;\n  private readonly options;\n  constructor(options) {\n    this.options = options;\n    this.axiosInstance = axios.create(options);\n    this.setupInterceptors();\n  }\n  private getTransform() {\n    const { transform } = this.options;\n    return transform;\n  }\n  private setupInterceptors() {\n    const transform = this.getTransform();\n    if (transform && transform.requestInterceptors) {\n      this.axiosInstance.interceptors.request.use((config) => transform.requestInterceptors(config, this.options));\n    }\n  }\n  uploadFile(config, params) {\n    const formData = new window.FormData();\n    formData.append(params.name || 'file', params.file);\n    return this.axiosInstance.request({ ...config, method: 'POST', data: formData });\n  }\n  get(config, options) {\n    return this.request({ ...config, method: 'GET' }, options);\n  }\n  post(config, options) {\n    return this.request({ ...config, method: 'POST' }, options);\n  }\n  put(config, options) {\n    return this.request({ ...config, method: 'PUT' }, options);\n  }\n  delete(config, options) {\n    return this.request({ ...config, method: 'DELETE' }, options);\n  }\n  request(config, options) {\n    let conf = cloneDeep(config);\n    const transform = this.getTransform();\n    const { requestOptions } = this.options;\n    const opt = Object.assign({}, requestOptions, options);\n    const { beforeRequestHook } = transform || {};\n    if (beforeRequestHook) {\n      conf = beforeRequestHook(conf, opt);\n    }\n    conf.requestOptions = opt;\n    conf = { ...conf };\n    return this.axiosInstance.request(conf);\n  }\n}\n"
+            },
+            {
+              "name": "src/api.ts",
+              "text": "import { VAxios } from './http/Axios';\n\nconst http = new VAxios({ transform: {}, requestOptions: { joinPrefix: true } });\n\nexport const list = () => http.get({ url: '/user/list' });\nexport const byPage = () => http.get({ url: '/user/list', params: { pageNo: 1 } }, { joinTime: false });\nexport const add = (params) => http.post({ url: '/user/add', params });\nexport const elsewhere = () => http.get({ url: '/user/list' }, { apiUrl: '/other' });\nexport const unread = (o) => http.get({ url: '/user/list' }, o);\n"
+            }
+          ],
+          "routes": [
+            "GET /user/list",
+            "POST /user/add"
+          ],
+          "expect": {
+            "hops": [],
+            "calls": {
+              "list": {
+                "to": "GET /user/list",
+                "unsettled": "reassigned"
+              }
+            }
+          },
+          "why": "a class without supportFormData is not the framework's shape: its step is read as its code reads, through a variable assigned again, and stays unsettled"
+        }
+      ]
+    }
+  ]
+}

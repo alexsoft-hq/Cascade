@@ -428,26 +428,36 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   // ---- 9. the frontend reaches the endpoints (RM28) -----------------------
   // jeecg's client is a CLASS: a verb method forwards to one generic method,
   // which calls the axios instance the constructor put on a field. Nothing in
-  // the engine knows any of those three names; the chain on the edge is what
-  // the lane followed, hop by hop.
+  // the engine's code knows any of those three names; the chain on the edge is
+  // what the lane followed, hop by hop, and the one rule pack that names the
+  // generic method knows the class by its shape, not by its name.
   const web = stats.web;
   assert.equal(web.instances, 1, JSON.stringify(web.prefix));
   assert.ok(web.wrappers.count > 100, `${web.wrappers.count} wrapper(s)`);
   assert.ok(web.wrappers.maxDepth >= 2, `deepest wrapper chain ${web.wrappers.maxDepth}`);
-  // Every one of them is matched, and the generic method is what grades them:
+  // Every one of them is matched, and the generic method is what grades them.
   // `VAxios.request` copies its options into `let conf = cloneDeep(config)`
   // and hands `conf` to a hook and to `supportFormData`, which assign it
-  // again. Whether the URL the caller wrote is the one that leaves is not
-  // settled by the code, so those edges are HEURISTIC and name that step.
+  // again, so its code does not settle whether the URL the caller wrote is
+  // the one that leaves. The class is vue-vben-admin's, and a rule pack says
+  // what that step does (src/core/rules/packs/vben-admin.json, V5): the verb
+  // and the path arrive, behind a prefix its request options decide, with the
+  // params appended when they are text. A call that hands it params that may
+  // be text is still not settled, and says so.
   assert.ok(web.resolved.SOUND_SET + web.resolved.HEURISTIC > 475,
     `the grep-level floor for this pair is 475 matched calls, this pack has ${web.resolved.SOUND_SET} sound + ${web.resolved.HEURISTIC} heuristic`);
-  assert.ok(web.calls.unreadHopBy.reassigned > 475, JSON.stringify(web.calls.unreadHopBy));
-  // Nothing in this frontend's source states the prefix its calls go through,
-  // and nothing needs to: the client is built with no baseURL at all, so the
-  // path as written IS the path, and the axis is shipped rather than guessed.
-  const prefixes = Object.values(web.prefix).flatMap((p) => p.instances.map((i) => i.from));
-  assert.deepEqual([...new Set(prefixes)], ['derived'], JSON.stringify(web.prefix));
-  assert.equal(pack.meta.axes.web.status, 'shipped', pack.meta.axes.web.reason);
+  const named = web.calls.throughNamedStep['vben-admin.request'];
+  assert.ok(named.calls > 475 && named.settled > 250, JSON.stringify(web.calls.throughNamedStep));
+  assert.equal(web.calls.unreadHopBy.reassigned, undefined, JSON.stringify(web.calls.unreadHopBy));
+  assert.ok(web.calls.unreadHopBy['hop-append'] > 250, JSON.stringify(web.calls.unreadHopBy));
+  // The client is built with no baseURL, so its own prefix is derived and
+  // empty; the prefix the step puts before the URL comes from request options
+  // no file here states, so it is chosen by match count, and the axis says
+  // which declaration settles it.
+  const prefixes = Object.values(web.prefix).flatMap((p) => p.instances.map((i) => [i.from, i.hop ? i.hop.rule : null]));
+  assert.deepEqual([...new Set(prefixes.map((x) => x.join(' ')))].sort(), ['auto vben-admin.request', 'derived '], JSON.stringify(web.prefix));
+  assert.equal(pack.meta.axes.web.status, 'degraded', pack.meta.axes.web.reason);
+  assert.match(pack.meta.axes.web.reason, /the rule vben-admin\.request names .*declare gatewayRoutes \{"\*": "<back>"\}/);
 
   // The chain really does end at `axios.create`, through the class's own field.
   const webEdge = graph.edges.find((e) => e.type === 'CALLS_HTTP' && e.evidence.rule === 'web-http-call'
@@ -456,8 +466,11 @@ test('jeecgboot/JeecgBoot: a mapping annotation is classified, not assumed', { t
   assert.equal(webEdge.evidence.sink.module, 'axios');
   assert.equal(webEdge.evidence.sink.chain.length, 2);
   assert.equal(graph.nodes.get(webEdge.from).lane, 'web');
-  const step = webEdge.evidence.sink.unsettled;
-  assert.deepEqual([step.hop.slice(step.hop.indexOf('#')), step.why, step.name], ['#VAxios.request', 'reassigned', 'conf']);
+  // The edge names the rule and the step it read, and the verb arrives.
+  const hop = webEdge.evidence.sink.hop;
+  assert.deepEqual([hop.rule, hop.step.slice(hop.step.indexOf('#'))], ['vben-admin.request', '#VAxios.request']);
+  assert.equal(webEdge.evidence.method.from, 'wrapper-verb');
+  assert.deepEqual([webEdge.evidence.prefix.from, webEdge.evidence.prefix.hop.rule], ['auto', 'vben-admin.request']);
   assert.notEqual(webEdge.grade, 'SOUND_SET');
 });
 

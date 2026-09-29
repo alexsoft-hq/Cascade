@@ -6,7 +6,7 @@
 // with its own tests, never an expression written inside a rule.
 //
 // Every kind answers the same things: its `name`, the `lane` whose analysis runs
-// it (java, ts, sql), the `stage` of an analysis it runs in (or `summary`, for one read
+// it (java, ts, sql, web), the `stage` of an analysis it runs in (or `summary`, for one read
 // when a whole-pack view asks), the strongest grade it may give (`gradeCap`, null for a
 // classification that draws no edge), `validateParams` (handed the whole rule
 // too, for a param whose rules depend on the rule's grade), `validateExample`,
@@ -28,6 +28,7 @@ import { typeormEntity } from './typeorm_entity.mjs';
 import { typeormOperation } from './typeorm_operation.mjs';
 import { typeormQueryBuilder } from './typeorm_query_builder.mjs';
 import { typeormReceiver } from './typeorm_receiver.mjs';
+import { webWrapperHop } from './web_wrapper_hop.mjs';
 
 export const KINDS = Object.freeze({
   [javaCodeSetting.name]: javaCodeSetting,
@@ -45,4 +46,5 @@ export const KINDS = Object.freeze({
   [typeormOperation.name]: typeormOperation,
   [typeormQueryBuilder.name]: typeormQueryBuilder,
   [typeormReceiver.name]: typeormReceiver,
+  [webWrapperHop.name]: webWrapperHop,
 });

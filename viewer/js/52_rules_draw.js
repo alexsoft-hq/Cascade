@@ -197,12 +197,19 @@ function libraryBlock(lib){
   ]);
 }
 
+/** What an example is read from: its source, its path, or its files one after another, each under its name. */
+function exampleText(ex){
+  if(ex.source!==undefined) return ex.source;
+  if(Array.isArray(ex.files)) return ex.files.map((f)=> `// ${f.name}\n${f.text}`).join('\n');
+  return ex.path;
+}
+
 function exampleItem(ex, holds){
   const mark = holds===true ? el('span',{className:'ruleok',textContent:t('rules.example.holds')})
     : holds===false ? el('span',{className:'rulebad',textContent:t('rules.example.fails')}) : null;
   return el('li',{},[
     mark,
-    el('pre',{className:'rulesrc',textContent: ex.source!==undefined ? ex.source : ex.path}),
+    el('pre',{className:'rulesrc',textContent: exampleText(ex)}),
     el('div',{className:'comment',textContent:t('rules.expect',{expect:JSON.stringify(ex.expect)})}),
     ex.why ? el('div',{className:'comment',textContent:ex.why}) : null,
   ]);

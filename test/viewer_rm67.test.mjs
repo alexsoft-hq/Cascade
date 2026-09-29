@@ -125,6 +125,21 @@ test('a rule opens on what it gave here, each link a way to the tab that reads i
   assert.equal(ev(ctx, 'JSON.stringify([TRACE.target, TRACE.dir])'), '[{"kind":"endpoint","id":"GET /api/users"},"down"]');
 });
 
+test('a web rule is found by its lane, and its examples show each file under its name', async (t) => {
+  const { ctx, byId } = await bootPage(t, { hash: '#p=gamma&tab=rules' });
+  await settle(ctx, 10);
+  byId.get('rscope').children[1].onclick();
+  const ids = () => byId.get('rulesview').querySelectorAll('.ruleid').filter((x) => !x.classList.contains('big')).map((x) => x.textContent);
+  assert.ok(texts(byId.get('rlane').children).includes('web'), 'the lane filter offers every lane a kind names');
+  ev(ctx, "RULES.lane='web'; drawRules();");
+  assert.deepEqual(ids(), ['vben-admin.request']);
+  ev(ctx, "rulesPick('vben-admin.request');");
+  await settle(ctx, 6);
+  const src = byId.get('rulesview').querySelector('.ruledetail .ruleex .rulesrc').textContent;
+  assert.match(src, /^\/\/ src\/http\/Axios\.ts\n/);
+  assert.match(src, /\n\/\/ src\/api\.ts\n/);
+});
+
 test('with no verdicts from the server, the examples say so rather than claim they hold', async (t) => {
   const { ctx, byId } = await bootPage(t, { hash: '#p=gamma&tab=rules', examples: false });
   await settle(ctx, 10);

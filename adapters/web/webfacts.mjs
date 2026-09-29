@@ -202,6 +202,15 @@
 // wrote it (`written` on the hand). A spread of an object that is not a
 // parameter is a set of every method and base URL key (`from: 'spread'`).
 //
+// webfacts/22 SAYS WHICH KEYS AN OBJECT ARGUMENT WRITES (RM67, V5). A wrapper
+// step a rule pack names (`web.wrapper-hop`) may put a prefix before the URL
+// that the call's own options decide, so the bridge has to know whether an
+// options object names one of those keys: an object summary lists every key it
+// writes by name (`names`) and says when one is written by an expression
+// (`computed`). `params` is summarized as `object` when it is written as an
+// object or an array, which is never text, since such a step may append text
+// params to the path; anything else stays `present`.
+//
 // DETERMINISM: the same tree prints the same bytes. Files come out in sorted
 // root-relative path order, records inside a file in (line, kind, ordinal)
 // order, and nothing here reads a clock, a locale or an environment variable.
@@ -212,7 +221,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/21';
+const VERSION = 'webfacts/22';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);

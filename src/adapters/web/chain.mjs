@@ -20,9 +20,14 @@
 // gives. A step whose calls lead on to different clients is not followed
 // branch by branch: the edge says so.
 //
+// A step a rule pack names (`web.wrapper-hop`) is read as the rule says
+// (named_hop.mjs), and the edge names the rule and the step.
+//
 // WHAT IT MUST NEVER KNOW ABOUT: files, bindings, routes. It is handed the
 // steps (src/adapters/web/calls.mjs traced them) and the caller's record, and
 // answers with what arrives.
+
+import { argumentsInto, readNamedStep } from './named_hop.mjs';
 
 /** The HTTP verbs a caller's or a step's object can name. */
 const HTTP_VERBS = new Set(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']);
@@ -50,6 +55,8 @@ export const UNSETTLED_BECAUSE = Object.freeze({
   handed: 'a step of the wrapper chain also hands the object to another call, which may change it',
   branches: 'a step of the wrapper chain makes calls that lead on to different clients, and which one runs is not settled by the code',
   'request-base': 'the request carries a base URL of its own that is not a path this lane can read, so where it goes is not settled',
+  'hop-option': 'a wrapper step a rule pack names puts a prefix before the URL that the request options decide, and this call hands it options that set, or may set, one of those keys (`option`, null when which is not known), so where it goes is not settled',
+  'hop-append': 'a wrapper step a rule pack names appends a key of the request to the URL when that key holds text (`from`), and this call may hand it text there, so the path it asks for may be longer than the one written',
 });
 
 /** A method a summary or a set spells, upper-cased, or null. */
@@ -283,6 +290,40 @@ function arrived(item, url, keys, names) {
   return item.places.some((p) => p.param === options && names.includes(p.key)) ? item : null;
 }
 
+/** The caller's request, where the walk starts: its URL's place, the method and base URL it carries, and what each argument holds. */
+function startOf(c, keys) {
+  const at = c.url.at;
+  return {
+    url: { param: at.arg, key: typeof at.key === 'string' ? at.key : null },
+    why: null,
+    method: carriedFrom(c, keys.method, verbOf),
+    base: keys.base ? carriedFrom(c, [keys.base], textOf) : null,
+    args: Array.isArray(c.args) ? c.args : [],
+  };
+}
+
+/**
+ * One way through one step. A step a rule pack names is read as the rule says
+ * (named_hop.mjs), where its call has the shape the rule relies on; why the
+ * rule does not settle this call goes on the edge like any other step's.
+ */
+function stepThrough(s, step, hop, keys) {
+  const named = step.named ? readNamedStep(s, step, hop, keys) : null;
+  const r = stepOver(s, step, named ? { ...hop, call: named.call } : hop, keys);
+  if (r === null) return null;
+  const line = hop.call && Number.isInteger(hop.call.line) ? { line: hop.call.line } : {};
+  const why = r.why ?? (named && named.why ? { hop: step.key, ...line, ...named.why } : null);
+  const marks = [...(s.named ?? []), ...(named ? [named.mark] : [])];
+  return { ...r, why, args: hop.call ? argumentsInto(s.args ?? [], hop.call) : [], ...(marks.length > 0 ? { named: marks } : {}) };
+}
+
+/** The steps rule packs named on the way, each once, in a fixed order. */
+function namedOf(states) {
+  const seen = new Map();
+  for (const s of states) for (const m of s.named ?? []) seen.set(JSON.stringify(m), m);
+  return seen.size > 0 ? { named: [...seen.keys()].sort().map((k) => seen.get(k)) } : {};
+}
+
 /** Every way through, reduced to what the request may carry. */
 function finish(states, keys) {
   const why = states.map((s) => s.why).find(Boolean) ?? null;
@@ -317,18 +358,12 @@ function finish(states, keys) {
  *          `methods` holds null for "no method arrives, the client's default"
  */
 export function walkChain(steps, c, keys) {
-  const at = c.url.at;
-  let states = [{
-    url: { param: at.arg, key: typeof at.key === 'string' ? at.key : null },
-    why: null,
-    method: carriedFrom(c, keys.method, verbOf),
-    base: keys.base ? carriedFrom(c, [keys.base], textOf) : null,
-  }];
+  let states = [startOf(c, keys)];
   for (const step of steps) {
     const next = [];
     for (const s of states) {
       for (const hop of step.hops) {
-        const r = stepOver(s, step, hop, keys);
+        const r = stepThrough(s, step, hop, keys);
         if (r !== null) next.push(step.forks > 0 && !r.why ? { ...r, why: { hop: step.key, why: 'branches' } } : r);
       }
     }
@@ -337,5 +372,5 @@ export function walkChain(steps, c, keys) {
     if (states.length === 0) return { reached: false };
     if (states.length > WAYS) states = states.slice(0, WAYS).map((s) => ({ ...s, why: s.why ?? { hop: step.key, why: 'branches' } }));
   }
-  return finish(states, keys);
+  return { ...finish(states, keys), ...namedOf(states) };
 }

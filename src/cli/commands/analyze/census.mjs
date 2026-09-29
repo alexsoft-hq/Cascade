@@ -594,13 +594,29 @@ const UNREAD_HOP_WORDS = Object.freeze({
   handed: 'an object also handed to another call',
   branches: 'calls that lead to different clients',
   'request-base': 'a base URL of the request\'s own that is not a path',
+  'hop-option': 'options that may set the prefix a step a rule names puts before the URL',
+  'hop-append': 'params a step a rule names appends to the path when they are text',
 });
+
+/**
+ * The calls that went through a wrapper step a rule pack names (V5), by rule:
+ * how many the rule settled, and where the prefix that step puts before the
+ * URL came from, which is a guess until the profile states it.
+ */
+function sayNamedSteps(calls, prefix) {
+  const hops = Object.values(prefix ?? {}).flatMap((p) => p.instances ?? []).filter((i) => i.hop);
+  for (const [rule, n] of Object.entries(calls?.throughNamedStep ?? {}).sort(([a], [b]) => (a < b ? -1 : 1))) {
+    const guessed = hops.some((i) => i.hop.rule === rule && i.from !== 'declared');
+    process.stderr.write(`Web lane: ${n.calls} call(s) go through a wrapper step the rule ${rule} names, and ${n.settled} of them are settled as it says; `
+      + `the prefix that step puts before the URL is decided by request options this lane does not read, so it is ${guessed ? 'chosen by match count until gatewayRoutes in the profile declares it' : 'the one gatewayRoutes in the profile declares'}\n`);
+  }
+}
 
 /**
  * A call whose wrapper does not hand its URL on (R2-K) draws no edge (review
  * 3), and says so once rather than disappearing.
  */
-function sayUrlNotHandedOn(calls) {
+function sayUrlNotHandedOn(calls, prefix) {
   const n = calls?.urlNotHandedOn ?? 0;
   if (n > 0) {
     process.stderr.write(`  [info] WEB_URL_NOT_HANDED_ON ${n} call(s) go through a wrapper that does not hand the argument their URL is in on to the client, so the request each makes does not ask for that URL and no edge says it does\n`);
@@ -612,6 +628,7 @@ function sayUrlNotHandedOn(calls) {
       .map(([why, k]) => `${UNREAD_HOP_WORDS[why] ?? why} ${k}`).join(', ');
     process.stderr.write(`  [info] WEB_URL_THROUGH_UNREAD_HOP ${unread} traced call(s) reach the client through a wrapper step the code does not settle (${by}): each may or may not carry the URL, the method or the base URL its caller gave, so each is graded HEURISTIC and its edge names the step, the key and why\n`);
   }
+  sayNamedSteps(calls, prefix);
 }
 
 /**
@@ -666,7 +683,7 @@ export function sayWebBridge(webBridgeStats, webBridgeMs) {
   for (const u of w.unmatchedUrls.slice(0, 5)) {
     process.stderr.write(`  [warn] WEB_NO_ROUTE ${u.url} (${u.count} call site(s)): nothing in this pack serves it\n`);
   }
-  sayUrlNotHandedOn(w.calls);
+  sayUrlNotHandedOn(w.calls, w.prefix);
   sayServerPorts(w.ports);
   const s = webBridgeStats.screens;
   const pg = s.byKind ?? { router: 0, page: 0 };

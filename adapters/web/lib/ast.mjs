@@ -137,7 +137,9 @@ export function summarizeArg(node) {
  * An object literal summarized by the config keys a request reads. `spread`
  * says a `...x` is written in it: the keys that brings in are not stated here,
  * so this record cannot say a key is absent, only that it is not written
- * (RM67, R2-K).
+ * (RM67, R2-K). `names` lists every key it writes by name, and `computed` says
+ * one is written by an expression: a wrapper step a rule pack names reads its
+ * options by key (V5), and a key neither says is one the object does not write.
  */
 function summarizeObject(node) {
   const keys = {};
@@ -146,10 +148,28 @@ function summarizeObject(node) {
     if (v === null) continue;
     // `data` and `params` are the request BODY. What is in them is the
     // application's business, never a route, so they are recorded as
-    // present and not summarized any further.
-    keys[key] = (key === 'data' || key === 'params') ? 'present' : summarizeArg(v);
+    // present and not summarized any further. Only whether `params` is written
+    // as an object is said, since a step may append text params to the path.
+    keys[key] = key === 'data' ? 'present' : key === 'params' ? bodyShapeOf(v) : summarizeArg(v);
   }
-  return node.properties.some((p) => p.type === 'SpreadElement') ? { kind: 'object', keys, spread: true } : { kind: 'object', keys };
+  const names = [];
+  let computed = false;
+  for (const p of node.properties) {
+    if (p.type === 'SpreadElement') continue;
+    const k = keyName(p);
+    if (k === null) computed = true;
+    else if (!names.includes(k)) names.push(k);
+  }
+  return {
+    kind: 'object', keys, ...(names.length > 0 ? { names } : {}),
+    ...(node.properties.some((p) => p.type === 'SpreadElement') ? { spread: true } : {}), ...(computed ? { computed: true } : {}),
+  };
+}
+
+/** `object` for a value written as an object or an array, which is never text; `present` for anything else. */
+function bodyShapeOf(v) {
+  const n = bare(v);
+  return n && (n.type === 'ObjectExpression' || n.type === 'ArrayExpression') ? 'object' : 'present';
 }
 
 /**

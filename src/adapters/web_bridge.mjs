@@ -73,6 +73,7 @@ import {
 import { buildNexacroScreens, buildPageScreens, countTemplates, indexTemplates, PAGE_RENDERS_BASIS } from './web/pages.mjs';
 import { NAVIGATION_RULE, placeNavigations } from './web/navigation.mjs';
 import { emptyWebStats } from './web/stats.mjs';
+import { builtinRegistry } from '../core/rules/registry.mjs';
 
 export const WEBFACTS_SCHEMA = 'cascade:webfacts:1';
 
@@ -133,8 +134,11 @@ function readTheFrontend(records, opts, stats) {
   const { packageOf, configFor } = readPackages({ opts, configs });
   const resolver = makeResolver({ files, parsed, packageOf, configFor, libraries });
   const { instanceOf, noteInstance } = collectInstances({ fileNames, files, packageOf, resolver });
+  // The wrapper steps a rule pack names are read as the rule says (V5); a
+  // caller may hand its own rules (a rule's examples run with that rule alone).
+  const hopRules = opts.hopRules ?? builtinRegistry().ofKind('web.wrapper-hop');
   const { wrappers, calleeTarget, sinkVerb, platformOf } = traceWrappers({
-    fileNames, files, libraries, pack, packageOf, resolver, stats,
+    fileNames, files, libraries, pack, packageOf, resolver, stats, records, hopRules,
   });
   stats.instances = instanceOf.size;
   return {
@@ -320,11 +324,20 @@ export function addWebFacts(g, webFacts, opts = {}) {
 
   // ---- what the run saw, and what it did not ------------------------------
   prefixCensus({ instanceOf: read.instanceOf, prefixOf: calls.prefixOf, stats });
-  stats.instances = [...read.instanceOf.values()].filter((i) => !i.id.endsWith('#(package)')).length;
+  stats.instances = [...read.instanceOf.values()].filter(isClientInstance).length;
   for (const site of calls.sites) if (site.assumed) stats.assumedAliases += 1;
   stats.unmatchedUrls = topCounts(calls.unmatched, 15, 'url');
   summariseUntraced(stats.untraced);
   return stats;
+}
+
+/**
+ * A client this frontend builds: not a package's stand-in for calls that
+ * reached none, and not a named step's view of a client whose prefix the step
+ * decides (prefix.mjs).
+ */
+function isClientInstance(i) {
+  return !i.id.endsWith('#(package)') && !i.hop;
 }
 
 /**

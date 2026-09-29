@@ -333,6 +333,30 @@ function autoPrefix(ctx, base, pkg, instanceId) {
 }
 
 /**
+ * What a client instance's base URL holds. A base URL written as a NAME is
+ * read where the name is declared (base_url.mjs makeBaseReader); the client's
+ * own file is the one before the `#` of its id.
+ */
+function instanceBase(ctx, inst, pkg) {
+  const written = inst.baseURL ?? ctx.configFor(pkg).axiosBaseUrl ?? null;
+  const named = inst.baseURL && ctx.readBaseName
+    ? ctx.readBaseName(inst.id.slice(0, inst.id.lastIndexOf('#')), inst.baseURL) : null;
+  return baseUrlValue(ctx, named ? named.summary : written, pkg, named ? named.assumed : false);
+}
+
+/**
+ * THE BASE A CALL THROUGH A NAMED STEP IS SENT BEHIND (V5). A step a rule pack
+ * names may put a prefix before the URL that its request options decide
+ * (src/core/rules/kinds/web_wrapper_hop.mjs), and no source here states which:
+ * the options are handed to the client's class when it is built, and this lane
+ * does not read them. So the base is not known. What the client's own base URL
+ * could be stays among the candidates, and only a declaration settles it.
+ */
+function hopBase(base) {
+  return { state: 'unknown', value: '', values: base.values ?? [''], absolute: false, ambiguous: false };
+}
+
+/**
  * The prefix machinery for one run.
  *
  * `callsPerInstance` is filled by the call pass BEFORE the first prefix is
@@ -358,13 +382,7 @@ export function makePrefixes(deps) {
     if (prefixCache.has(instanceId)) return prefixCache.get(instanceId);
     const inst = ctx.instanceOf.get(instanceId) ?? { id: instanceId, module: null, baseURL: null, package: '' };
     const pkg = inst.package ?? '';
-    const written = inst.baseURL ?? ctx.configFor(pkg).axiosBaseUrl ?? null;
-    // A base URL written as a NAME is read where the name is declared
-    // (base_url.mjs makeBaseReader); the client's own file is the one before
-    // the `#` of its id.
-    const named = inst.baseURL && ctx.readBaseName
-      ? ctx.readBaseName(inst.id.slice(0, inst.id.lastIndexOf('#')), inst.baseURL) : null;
-    const base = baseUrlValue(ctx, named ? named.summary : written, pkg, named ? named.assumed : false);
+    const base = inst.hop ? hopBase(instanceBase(ctx, ctx.instanceOf.get(inst.hop.of) ?? inst, pkg)) : instanceBase(ctx, inst, pkg);
     const out = declaredPrefix(ctx, base)
       ?? derivedPrefix(ctx, base, pkg)
       ?? autoPrefix(ctx, base, pkg, instanceId);
@@ -376,6 +394,8 @@ export function makePrefixes(deps) {
     // WHICH BUILD GAVE WHICH VALUE, for a base URL with a default or a
     // condition in it: the edge has to say whether the literal was used.
     if (base.reads) out.reads = base.reads;
+    // Behind a named step's prefix, the rule and the option keys that decide it.
+    if (inst.hop) out.hop = { rule: inst.hop.rule, by: inst.hop.by };
     prefixCache.set(instanceId, out);
     return out;
   };
@@ -401,6 +421,9 @@ export function prefixCensus({ instanceOf, prefixOf, stats }) {
       ...(p.service ? { service: p.service } : {}),
       // Only when the value rests on one (base_url.mjs WEB_BASE_GUESS).
       ...(p.guess ? { guess: p.guess } : {}),
+      // Only behind a step a rule pack names: the rule, the option keys that
+      // decide the prefix, and the client instance it is that step's.
+      ...(inst.hop ? { hop: inst.hop } : {}),
       candidates: p.from === 'auto' ? p.candidates : [],
     });
   }

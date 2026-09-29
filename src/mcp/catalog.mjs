@@ -567,7 +567,7 @@ export const TOOLS = Object.freeze({
       + 'every kind ({name, lane, stage, gradeCap, draws}), every pack, and every rule with `gave: '
       + '{edges, nodes}` in this pack and `here` (it gave something), sorted by what it gave, the '
       + 'biggest first. `query` (a substring of the id, pack, kind or description), `kind`, `lane` '
-      + '(java, ts, sql) and `here: true` narrow the list. `gave` also counts them by `byType` and '
+      + '(java, ts, sql, web) and `here: true` narrow the list. `gave` also counts them by `byType` and '
       + '`byGrade` (the links) and `byKind` (the nodes). `gave` is null for a kind that only '
       + 'classifies (the database a file path names) where the pack names the rule nowhere: '
       + 'there is nothing to count, which is not the same as unused; a classifying rule a lane '
@@ -583,7 +583,7 @@ export const TOOLS = Object.freeze({
         rule: { type: 'string', description: 'a rule id, such as nestjs.routes: that rule whole, and what it gave here' },
         query: { type: 'string', description: 'list only: a case-insensitive substring of the id, pack, kind or description' },
         kind: { type: 'string', description: 'list only: one rule kind, such as java.type-role' },
-        lane: { type: 'string', enum: ['java', 'ts', 'sql'], description: 'list only: the rules of one lane' },
+        lane: { type: 'string', enum: ['java', 'ts', 'sql', 'web'], description: 'list only: the rules of one lane' },
         here: { type: 'boolean', description: 'list only: only the rules that gave something in this pack' },
         limit: { type: 'integer', minimum: 1, maximum: 500, description: 'with rule: edges and nodes per page, 1..500 (default 50)' },
         offset: { type: 'integer', minimum: 0 },

@@ -24,7 +24,7 @@
 
 const RULES = { list:null, examples:null, detail:new Map(), pick:null, offset:0, q:'', kind:'', lane:'', scope:null, seq:0 };
 const RULES_PAGE = 10;
-const RULES_LANES = ['java', 'ts', 'sql'];
+const RULES_LANES = ['java', 'ts', 'sql', 'web'];
 
 /** Everything the tab held for the project being left. */
 function rulesReset(){

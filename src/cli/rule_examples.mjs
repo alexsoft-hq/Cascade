@@ -3,9 +3,10 @@
 // `cascade rules test` and the viewer's Rules tab run the SAME examples the
 // same way, so a rule the CLI says holds is the one the page marks as holding.
 // A Java example is source code, parsed by the real Java worker, so it needs a
-// JDK; a TypeScript one is read by the TypeScript worker in process. Without a
-// JDK the Java examples are NOT RUN and say so: an example nobody ran is not
-// one that holds.
+// JDK; a TypeScript one is read by the TypeScript worker in process, and a web
+// one by the web worker and the web lane, which need nothing beyond Node.
+// Without a JDK the Java examples are NOT RUN and say so: an example nobody ran
+// is not one that holds.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,6 +16,7 @@ import { findJdk } from './env.mjs';
 import { runJavaLane } from './lanes_run.mjs';
 import { factsOfFile, valueOfSource } from '../../adapters/ts/tsfacts.mjs';
 import { readOpenApiDocument } from '../adapters/openapi_bridge.mjs';
+import { webCallsForExamples, webFactsForExamples } from './web_examples.mjs';
 
 /** Each example source written under `dir` at its own relative name. */
 function writeSources(dir, files) {
@@ -46,7 +48,10 @@ function javaWorkerForExamples() {
  * The readers that run in process: a TypeScript example needs nothing but the
  * engine, and neither does an OpenAPI document.
  */
-const IN_PROCESS_READERS = Object.freeze({ tsFacts: factsOfFile, tsValue: valueOfSource, openApiDocument: readOpenApiDocument });
+const IN_PROCESS_READERS = Object.freeze({
+  tsFacts: factsOfFile, tsValue: valueOfSource, openApiDocument: readOpenApiDocument,
+  webFacts: webFactsForExamples, webCalls: webCallsForExamples,
+});
 
 /** Everything a rule's examples may need to run, on this machine. */
 export function ruleExampleEnv() {

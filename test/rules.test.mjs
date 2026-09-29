@@ -23,6 +23,7 @@ import { findJdk } from '../src/cli/env.mjs';
 import { runJavaLane } from '../src/cli/lanes_run.mjs';
 import { factsOfFile, valueOfSource } from '../adapters/ts/tsfacts.mjs';
 import { readOpenApiDocument } from '../src/adapters/openapi_bridge.mjs';
+import { webCallsForExamples, webFactsForExamples } from '../src/cli/web_examples.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const cli = (...args) => spawnSync(process.execPath, [path.join(ENGINE_ROOT, 'bin', 'cascade.mjs'), 'rules', ...args], { encoding: 'utf8' });
@@ -74,7 +75,8 @@ test('the worker keeps each type argument in its place: one with no class name i
 
 test('every rule the engine carries holds every one of its examples, the Java ones through the real worker', (t) => {
   const javaFacts = javaWorker();
-  const results = testRules(builtinRegistry(), { env: { tsFacts: factsOfFile, tsValue: valueOfSource, openApiDocument: readOpenApiDocument, ...(javaFacts ? { javaFacts } : {}) } });
+  const web = { webFacts: webFactsForExamples, webCalls: webCallsForExamples };
+  const results = testRules(builtinRegistry(), { env: { tsFacts: factsOfFile, tsValue: valueOfSource, openApiDocument: readOpenApiDocument, ...web, ...(javaFacts ? { javaFacts } : {}) } });
   assert.ok(results.length > 0, 'the engine carries rules');
   for (const r of results) assert.deepEqual(r.failures, [], `${r.id}: ${JSON.stringify(r.failures)}`);
   const notRun = results.filter((r) => r.notRun);
@@ -215,7 +217,7 @@ test('a pack with problems is refused with every problem, each named by its file
   has(/^bad\.json: names "id" must be "p\.<name>"/);
   has(/^bad\.json: p\.empty needs at least one example/);
   has(/^bad\.json: p\.graded gives a grade, but a sql\.dialect-path rule draws no edge to grade$/);
-  has(/^bad\.json: p\.unknown-kind "kind" must be one of java\.code-setting, java\.contract-link, java\.route-function, java\.type-role, prisma\.operation, sql\.dialect-path, table\.join-table, ts\.provider-binding, ts\.route-decorator, ts\.test-support, ts\.type-role, typeorm\.entity, typeorm\.operation, typeorm\.query-builder, typeorm\.receiver, got "java\.nothing"$/);
+  has(/^bad\.json: p\.unknown-kind "kind" must be one of java\.code-setting, java\.contract-link, java\.route-function, java\.type-role, prisma\.operation, sql\.dialect-path, table\.join-table, ts\.provider-binding, ts\.route-decorator, ts\.test-support, ts\.type-role, typeorm\.entity, typeorm\.operation, typeorm\.query-builder, typeorm\.receiver, web\.wrapper-hop, got "java\.nothing"$/);
 });
 
 test('a dialect rule refuses words that are not plain words, one word naming two databases, and an example it does not declare', () => {

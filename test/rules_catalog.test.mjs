@@ -28,7 +28,7 @@ test('every pack and rule the engine carries, each rule whole, the same the CLI 
       description: entry.rule.description, params: entry.rule.params, examples: entry.rule.examples,
     }, id);
   }
-  assert.deepEqual(catalog.kinds.map((k) => k.name).sort(), ['java.code-setting', 'java.contract-link', 'java.route-function', 'java.type-role', 'prisma.operation', 'sql.dialect-path', 'table.join-table', 'ts.provider-binding', 'ts.route-decorator', 'ts.test-support', 'ts.type-role', 'typeorm.entity', 'typeorm.operation', 'typeorm.query-builder', 'typeorm.receiver']);
+  assert.deepEqual(catalog.kinds.map((k) => k.name).sort(), ['java.code-setting', 'java.contract-link', 'java.route-function', 'java.type-role', 'prisma.operation', 'sql.dialect-path', 'table.join-table', 'ts.provider-binding', 'ts.route-decorator', 'ts.test-support', 'ts.type-role', 'typeorm.entity', 'typeorm.operation', 'typeorm.query-builder', 'typeorm.receiver', 'web.wrapper-hop']);
   assert.equal(ruleOf(catalog, 'mybatis-plus-join.mapper').grade, 'SOUND_SET');
   assert.equal(ruleOf(catalog, 'mybatis-plus.mapper').grade, null, 'no grade written means the kind\'s own');
 });

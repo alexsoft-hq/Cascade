@@ -143,9 +143,10 @@ function emptyCallStats() {
     // A traced call through a wrapper step the code does not settle for its
     // URL, method or base URL (a variable assigned again, a key the step
     // writes, `this`, a call on the options): taken as reaching the sink,
-    // graded HEURISTIC, and counted by why (review 2 item 2, review 3).
+    // graded HEURISTIC, and counted by why (review 2 item 2, review 3). Through a
+    // step a rule pack names, by rule: how many, and how many it settled (V5).
     urlThroughUnreadHop: 0,
-    unreadHopBy: {},
+    unreadHopBy: {}, throughNamedStep: {},
     // A call that reached no client and whose callee TAKES A PATH APART rather
     // than asking for one (`pathname.startsWith('/x')`, `p.split('/')`).
     // Counted apart from `notUrlShaped` because the argument really is a path
