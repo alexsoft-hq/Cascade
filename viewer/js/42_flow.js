@@ -150,7 +150,10 @@ async function drawChain(v, keepLimit){
 /** Put one answer on screen, and the question it answered in the URL. */
 function traceChainShow(v, r, args, key){
   v.resp=r; v.args=args; v.sel=null; v.lastKey=key;
+  // Which question this answer is, so the sentence over it is never another's (58_answer.js).
+  v.respRaw=v.lastRaw;
   renderChain(v, r);
+  renderTraceHead();
   refreshExportButtons();
   traceWritePick();
 }
@@ -193,10 +196,9 @@ function flowEmptyNote(v, a, field){
     if(!wider){
       return el('div',{className:'empty',textContent:t('chain.empty.nomode',{n:cut.byMode})});
     }
-    return el('div',{className:'empty'},[
-      t('chain.empty.bymode',{mode, n:cut.byMode}),
-      el('button',{className:'mini',textContent:t('chain.empty.switch',{mode:wider}),onclick:()=>{ byId(v.modeId).value=wider; drawChain(v); }})
-    ]);
+    // The line over the picture says why and offers the wider mode, once
+    // (58_answer.js); a lane only says that it is one of the empty ones.
+    return el('div',{className:'empty',textContent:t('chain.empty.bymode',{mode})});
   }
   return el('ul',{className:'list'},[emptyNote(a.empty, field)]);
 }
@@ -295,7 +297,8 @@ function flowEntryRow(v, entry){
     el('div',{className:'fmeta'},[
       v.direction==='up'? el('span',{className:'tag',textContent:entry.kind}) : null,
       (entry.grade && entry.grade!=='EXACT') ? badge(entry.grade) : null,
-      sub ? el('span',{className:'comment',title:sub,textContent:sub}) : null ])
+      // The handler keeps its method, the part that tells two apart (RM67-U2e: it read "UserControll…").
+      sub ? el('span',{className:'comment psplit',title:sub}, nameSplit(sub)) : null ])
   ],{ hops:0, kind:entry.kind, route:entry.path??null, httpMethod:entry.httpMethod??null,
       handler:entry.handler??null, handlerShort:entry.handlerShort??null, short:entry.short??null,
       owner:entry.owner??null, transactional:entry.transactional===true,
@@ -383,7 +386,7 @@ function flowEndpointRow(v, e){
     // The recording is a MARKER beside the grade and never a grade: no walk
     // follows a RUNTIME_ONLY edge, so nothing here was drawn from one.
     el('div',{className:'fmeta'},[ hopChip('endpoint', e.hops), badge(e.grade),
-      e.observed? seenTag(v.resp) : null,
+      e.observed? seenTag(v.resp) : null, addressTag(e),
       e.frontendCalls? el('span',{className:'count',title:t('chain.tag.frontend.title'),
         textContent:t('chain.tag.frontend',{n:e.frontendCalls})}) : el('span',{className:'comment',textContent:via}) ])
   // On an endpoint row the server's `path` is the ROUTE and the walked edges are
@@ -401,7 +404,7 @@ function flowWebFnRow(v, w){
     el('div',{className:'fmeta'},[ hopChip('webfn', w.hops), badge(w.grade),
       el('span',{className:'tag',title:t(w.component?'chain.tag.component.title':'chain.tag.api.title'),
         textContent:t(w.component?'chain.tag.component':'chain.tag.api')}),
-      w.observed? seenTag(v.resp) : null ])
+      w.observed? seenTag(v.resp) : null, addressTag(w) ])
   ],w);
 }
 // A SCREEN: the far end of the round trip. It is a route the BROWSER shows, so
@@ -413,11 +416,41 @@ function flowScreenRow(v, s){
     el('div',{className:'frowtop'},[kindGlyph('screen',12), laneName(v, 'screen:'+s.id, [s.id, s.title, s.component].filter(Boolean).join('\n')), projTag(s)]),
     el('div',{className:'fmeta'},[ hopChip('screen', s.hops), badge(s.grade),
       s.group? el('span',{className:'tag',textContent:s.group}) : null,
+      // A page a route's handler renders on the server, named by its template (J4).
+      s.template? el('span',{className:'tag',title:t('screen.kind.page.title'),textContent:t('screen.kind.page')}) : null,
       s.observed? seenTag(v.resp) : null,
-      el('span',{className:'comment',title:s.title||'',textContent:s.title||''}) ])
+      el('span',{className:'comment',title:s.title||s.template||'',textContent:s.title||s.template||''}) ])
   // A screen row's walked edges are `walkedPath`, like an endpoint's: `path` on
   // this row would be the route the browser shows, and one field cannot be both.
   ],{...s, route:s.id, path:s.walkedPath||null});
+}
+/**
+ * THE ADDRESS A CALL WAS MATCHED BY, WHEN IT IS NOT SURE: the route's own
+ * address is a guess (`address`), the call went to a catch-all a more specific
+ * route may shadow under a prefix set in code (`catchAll`), or it matched only
+ * once a prefix was dropped (`prefixShift`). Said as a tag on the row the call
+ * lands on, the engine's reason on its title, never as a grade of its own.
+ */
+function addressTag(x){
+  const steps=Array.isArray(x.walkedPath) ? x.walkedPath : (Array.isArray(x.path) ? x.path : []);
+  const last=steps[steps.length-1];
+  const ev=(last && (last.type==='CALLS_HTTP' || last.type==='HANDLES') && last.evidence) || null;
+  const why=ev ? addressDoubts(ev) : [];
+  return why.length ? el('span',{className:'tag warn', title:why.join(' '), textContent:t('chain.tag.address')}) : null;
+}
+// What the front of a frontend call's URL rests on, when a guess put it there
+// (the web lane's `url.guess`): the page's sentence per kind, the kind itself
+// where the page has none.
+const ADDRESS_GUESS = { 'port-default':'chain.tag.address.port.default', 'port-unknown':'chain.tag.address.port.unknown',
+  fallback:'chain.tag.address.fallback', 'deployment-host':'chain.tag.address.host', 'assumed-alias':'chain.tag.address.alias' };
+/** Each doubt a call's address carries, in the page's words, the engine's reason inside the first. */
+function addressDoubts(ev){
+  const own=typeof ev.address==='string' ? ev.address : (ev.address && ev.address.why);
+  const guess=ev.url && ev.url.guess;
+  return [ own ? t('chain.tag.address.own',{why:own}) : null,
+    guess ? (ADDRESS_GUESS[guess] ? t(ADDRESS_GUESS[guess]) : t('chain.tag.address.guess',{guess})) : null,
+    ev.catchAll ? t('chain.tag.address.catchall') : null,
+    ev.prefixShift ? t('chain.tag.address.shift',{dropped:ev.prefixShift.dropped}) : null ].filter(Boolean);
 }
 // ---------- second rendering: LAYERS ----------
 // The same answer, folded per hop: how deep this chain goes and how wide each
@@ -789,6 +822,12 @@ function renderChainSide(v){
   const kids=[];
   if(v.sel && v.rows.has(v.sel)) kids.push(flowCard(v, v.sel, v.rows.get(v.sel)));
   const counts=w.byLinkGrade||{};
+  // A LINE AND A BADGE ARE TWO COUNTS (RM67-U2e): the lines by the grade of
+  // their one link, the rows by the weakest link on their way. A legend that
+  // said "HEURISTIC 0" beside a picture of HEURISTIC badges read as a
+  // contradiction, so each grade says both, the rows as drawn here.
+  const badges={};
+  for(const l of (v.model ? v.model.lanes.slice(1) : [])) for(const x of l.rows) badges[x.grade]=(badges[x.grade]||0)+1;
   // WHAT LIMITS THIS ANSWER stands beside it, first (RM67-U2b): the cut counts,
   // then the mode floor. The engine's own sentences stay in the rail below.
   kids.push(traceLimitsPanel(v, r));
@@ -799,9 +838,12 @@ function renderChainSide(v){
     // The grade name and its badge are the ENGINE's; only the sentence beside
     // each one belongs to the page and is translated, in the one wording every
     // place that explains a grade uses (grade.say.*).
-    el('ul',{className:'list'}, LANE_BANDS.map((g)=>
+    el('ul',{className:'list'}, [ ...LANE_BANDS.map((g)=>
       el('li',{},[ el('span',{style:'display:flex;align-items:center;gap:7px'},[flowLineSample(g), badge(g), el('span',{className:'comment',textContent:gradeSay(g)})]),
-        el('span',{className:'count',textContent:t('chain.legend.links',{n:counts[g]||0})}) ]))),
+        el('span',{className:'count',textContent:t('chain.legend.links',{links:counts[g]||0, rows:badges[g]||0})}) ])),
+      // The two grades no mode walks are said too, so no badge on the page is a code nobody explained (RM67-U2e).
+      ...GRADES.filter((g)=> !LANE_BANDS.includes(g)).map((g)=> el('li',{},[ el('span',{style:'display:flex;align-items:center;gap:7px'},[
+        flowLineSample(g), badge(g), el('span',{className:'comment',textContent:gradeSay(g)}) ]) ])) ]),
     // A line and a badge answer two different questions (RM67).
     el('div',{className:'comment',style:'margin-top:8px',textContent:t('chain.legend.path')}),
     // `other` is only mentioned when there IS one — a reached node this view
@@ -851,10 +893,10 @@ function chainLeftOut(v, r){
     // The analysis's diagnostics, one row per kind (diagGroups): a flood of one
     // kind is a count and what it says, not a page of copies.
     diags.length ? el('div',{className:'leftfix'},[ el('div',{className:'raillbl',textContent:t('chain.left.fix')}),
-      ...diagGroups(diags).map((g)=> g.count===1
-        ? el('div',{className:'honesty'},[ el('span',{className:'ovdiag',textContent:g.kind}), ' ', g.causes[0].items[0].reason ])
-        : el('div',{className:'honesty'},[ el('span',{className:'ovdiag',textContent:g.kind}), ' ',
-          fold('chain.left.diag.'+g.kind, [t('diag.group.lead',{n:g.count})], ()=> diagGroupBody('chain.left.diag.'+g.kind, g), null, true) ])) ]) : null,
+      // Each kind in the page's words, the engine's own sentences folded (RM67-U2e).
+      ...diagGroups(diags).map((g)=> el('div',{className:'honesty'},[ el('b',{textContent:diagTitle(g.kind)}), ' ',
+        el('span',{className:'ovdiag',textContent:g.kind}),
+        fold('chain.left.diag.'+g.kind, [t('status.engine.words'), '  '+t('diag.group.lead',{n:g.count})], ()=> diagGroupBody('chain.left.diag.'+g.kind, g), null, true) ])) ]) : null,
   ]);
 }
 function flowCard(v, key, row){

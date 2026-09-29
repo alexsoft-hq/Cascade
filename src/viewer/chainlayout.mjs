@@ -92,7 +92,7 @@ function pathParts(head, path, max) {
  * @param {{routeMax?:number}} [fit]
  * @returns {{core:string, owner:string, levels:number, at:(q:number)=>string}}
  */
-export function labelParts(id, fit = CHAIN_FIT) {
+export function labelParts(id, fit = CHAIN_FIT, call = null) {
   const s = String(id);
   const c = s.indexOf(':');
   const kind = c >= 0 ? s.slice(0, c) : '';
@@ -109,8 +109,35 @@ export function labelParts(id, fit = CHAIN_FIT) {
   // The short name leaves it off; it is the first thing that tells two call
   // sites of one method apart when two clients count their calls from #0 each.
   const client = kind === 'statement' ? /^([a-z][a-z0-9-]*):(?!\/)/.exec(key) : null;
-  if (client) return withClient(memberParts(key.slice(client[0].length)), client[1]);
+  if (client) return withCall(withClient(memberParts(key.slice(client[0].length)), client[1]), call);
   return memberParts(key);
+}
+
+/**
+ * AN ORM CALL SITE NAMED BY WHAT IT DOES (RM67-U2e): `UserService.deleteUser →
+ * Access.deleteMany`, where it was `UserService.deleteUser #0` beside #1 to #4,
+ * numbers that tell a reader nothing. Two sites of one method that make the same
+ * call grow by their ordinal first, then by their client and their file.
+ */
+function withCall(p, call) {
+  if (!call) return p;
+  const bare = p.core.replace(/ #\d+$/, '');
+  return { ...p, core: `${bare} → ${call}`, levels: p.levels + 1, at: (q) => (q ? `${p.at(q - 1)} → ${call}` : `${bare} → ${call}`) };
+}
+
+/**
+ * The ORM calls an answer's statements make, by node id, as a name reads them
+ * (`Access.deleteMany`, or the bare operation where the call names no model).
+ * @param {object} a  a flow answer
+ * @returns {Map<string,string>}
+ */
+export function ormCallsOf(a) {
+  const out = new Map();
+  const say = (c) => (c.model ? `${c.model}.${c.operation}` : c.operation);
+  for (const x of (a && a.statements) || []) if (x && x.call) out.set(`statement:${x.id}`, say(x.call));
+  const e = a && a.entry;
+  if (e && e.kind === 'statement' && e.call) out.set(e.start || `statement:${e.id}`, say(e.call));
+  return out;
 }
 
 /** A method, a statement or a dotted name, as labelParts reads it once its kind is known. */
@@ -139,11 +166,12 @@ function withClient(p, client) {
  * them apart, one step at a time, until they differ or run out of steps.
  * @param {string[]} ids
  * @param {object} [fit]
+ * @param {Map<string,string>} [calls]  what an ORM call site does, by id (ormCallsOf)
  * @returns {Map<string,{text:string, owner:string}>}
  */
-export function chainLabels(ids, fit = CHAIN_FIT) {
+export function chainLabels(ids, fit = CHAIN_FIT, calls = null) {
   const uniq = [...new Set(ids)];
-  const parts = new Map(uniq.map((id) => [id, labelParts(id, fit)]));
+  const parts = new Map(uniq.map((id) => [id, labelParts(id, fit, calls ? calls.get(id) : null)]));
   const q = new Map(uniq.map((id) => [id, 0]));
   const text = (id) => parts.get(id).at(q.get(id));
   for (let round = 0; round < 12; round += 1) {

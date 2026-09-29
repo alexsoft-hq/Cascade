@@ -103,8 +103,11 @@ const LAZY_TABS={ tx:{ box:'txview', load:()=>loadTx() }, rules:{ box:'rulesview
 function activateTab(name){
   name=OLD_TABS[name] || name;
   if(TABNAMES.indexOf(name)<0) name='start';
+  const left=STATE.tab;
   STATE.tab=name;
   PLACE_LAST[placeOf(name).id]=name;
+  // Compare with nothing to compare stays marked only while it is on screen (RM67-U2e).
+  if(left==='compare' && name!=='compare') renderCompareChrome();
   renderPlaceChrome();
   TABNAMES.forEach(n=> document.getElementById('tab-'+n).classList.toggle('hidden', name!==n));
   writeHash();
@@ -207,6 +210,9 @@ function renderLangChrome(){
 const MAST_BUILD_FOLD='mast.build';
 function paintBuildFold(open){
   byId('mbuild').classList.toggle('hidden', !open);
+  // The chain's counts are behind the same control (RM67-U2e), so the masthead
+  // is one line until a reader asks for more.
+  byId('crail').classList.toggle('hidden', !open);
   byId('mbuildbtn').setAttribute('aria-expanded', String(open));
 }
 function wireBuildFold(){
@@ -279,23 +285,15 @@ function renderTrustChip(tt){
   byId('mtrustsr').textContent=hide ? '' : t('mast.trust')+' '+say;
   chip.title=hide ? '' : trustWhy(tt);
 }
-// THE MASTHEAD CHIPS: what this answer is worth, and the two things a reader may
-// change. The limits chip is the SAME fold as the one in the evidence rail (it
-// shares its key, so opening either opens both), and its body drops under the
-// masthead rather than beside a tab.
-function renderMastChrome(){
-  const now=themeNow();
-  byId('themeseg').replaceChildren(...THEMES.map((name)=> el('button',{
-    textContent: t(name==='signal' ? 'theme.dark' : 'theme.light'),
-    className: name===now ? 'on' : '',
-    onclick: ()=> setTheme(name) })));
-  wireBuildFold();
-  const m=STATE.meta;
+/** The freshness chip: the page's words for the verdict, the engine's verdict on its title and for a screen reader. */
+function renderFreshChip(m){
   const fresh=(m && !m.error && m.freshness && m.freshness.verdict) || 'unknown';
   const fs=MAST_FRESH[fresh] || { say:'', why:'', tint:'' };
   const fchip=byId('mfreshchip');
   byId('mfresh').textContent=fs.say ? t(fs.say) : '';
-  fchip.className='mchip quiet'+(fs.tint ? ' '+fs.tint : '');
+  // A verdict the page has no words for is not a bare dot (RM67-U2e): the chip
+  // stands down, and the verdict stays in the rail and on Analysis status.
+  fchip.className='mchip quiet'+(fs.tint ? ' '+fs.tint : '')+(fs.say ? '' : ' hidden');
   // SAID OUT LOUD, for a reader who is being read to. The visible chip leans on
   // a coloured dot and a tooltip, and neither of those reaches a screen reader,
   // so the state is written again here and clipped to a pixel. It names what it
@@ -307,6 +305,19 @@ function renderMastChrome(){
   // tooltip is where the engine's word lives, so it is never the missing half.
   fchip.title=[ fs.why ? t(fs.why) : '', t('mast.freshness')+' '+fresh,
     'basis.freshness.verdict' ].filter((x)=>x).join('  ');
+}
+// THE MASTHEAD CHIPS: what this answer is worth, and the two things a reader may
+// change. The limits chip is the SAME fold as the one in the evidence rail (it
+// shares its key, so opening either opens both), and its body drops under the
+// masthead rather than beside a tab.
+function renderMastChrome(){
+  const now=themeNow();
+  byId('themeseg').replaceChildren(...THEMES.map((name)=> el('button',{
+    textContent: t(name==='signal' ? 'theme.dark' : 'theme.light'),
+    className: name===now ? 'on' : '',
+    onclick: ()=> setTheme(name) })));
+  wireBuildFold();
+  renderFreshChip(STATE.meta);
   // The trust level rides with the landing answer, which every tab's rail also
   // carries: one source, printed once at the top of the page. The NAME is the
   // engine's and is relayed verbatim in the tooltip. A trust level is a computed

@@ -56,7 +56,7 @@ import {
 // The three names this module has always exported beside `chainWalk`, from where
 // they live now: `nodeLabel` is the one display rule the tools, the walk and the
 // page share, and two importers read it from here.
-export { nodeLabel, frontendCallsOf, weakestOf, ChainError } from './chain_steps.mjs';
+export { nodeLabel, frontendCallsOf, weakestOf, ChainError, ormCall } from './chain_steps.mjs';
 
 /**
  * Walk the chain from `start` and project it into the Flow / Impact view model.

@@ -17,7 +17,7 @@
 
 import { nodeId, FLOW_EDGE_TYPES, GRADE_SETS, DEFAULT_WALK_DEPTH, WALK_NODE_CAP, depthSaid, sqlEdgesOf } from '../core/graph.mjs';
 import { changeImpact } from '../core/overlay.mjs';
-import { chainWalk, nodeLabel } from '../core/chain.mjs';
+import { chainWalk, nodeLabel, ormCall } from '../core/chain.mjs';
 import { buildCoupling, SHARED_AT } from '../core/coupling.mjs';
 import { buildMap, LAYERS as MAP_LAYERS, DEFAULT_LIMIT as MAP_LIMIT_DEFAULT } from '../core/map.mjs';
 import { buildOverview } from '../core/overview.mjs';
@@ -1857,6 +1857,23 @@ function entryLinkClause(link) {
   return `this route's handler is linked to it only by a rule's guess (${named}), so every row below is graded by that link`;
 }
 
+/**
+ * A statement read as the TARGET, described exactly like one read as a row of
+ * the chain: its type, the ORM call it makes where one made it (RM67-U2e), and
+ * the tables this mode reaches through it.
+ */
+function statementEntry(graph, id, n, mode) {
+  const call = ormCall(n);
+  return {
+    statementType: n.statementType ?? null,
+    ...(call ? { call } : {}),
+    tables: sqlEdgesOf(graph, id, mode)
+      .filter((e) => e.type === 'EXECUTES')
+      .map((e) => ({ table: strip(e.to), access: graph.edgeAt(e.idx)?.evidence?.access ?? 'read' }))
+      .sort((a, b) => cmpStr(a.table, b.table)),
+  };
+}
+
 /** What a route's picture says about where it started, when there is something to say. */
 function entryHandlerNote(graph, { epId, mode, handlerIds, handler, link }) {
   if (handlerIds.length > 0 && handler === null) {
@@ -1934,15 +1951,7 @@ if (entryKind === 'endpoint') {
   start = id;
   entry = { kind: entryKind, id: strip(id), short: nodeLabel(n, id), file: n.file ?? null, line: n.line ?? null, start };
   if (entryKind === 'column' || entryKind === 'table') entry.comment = n.comment ?? null;
-  if (entryKind === 'statement') {
-    entry.statementType = n.statementType ?? null;
-    // The same tables a statement ROW carries, so a statement read as the
-    // TARGET is described exactly like one read as a row of the chain.
-    entry.tables = sqlEdgesOf(graph, id, mode)
-      .filter((e) => e.type === 'EXECUTES')
-      .map((e) => ({ table: strip(e.to), access: graph.edgeAt(e.idx)?.evidence?.access ?? 'read' }))
-      .sort((a, b) => cmpStr(a.table, b.table));
-  }
+  if (entryKind === 'statement') Object.assign(entry, statementEntry(graph, id, n, mode));
   if (entryKind === 'symbol') { entry.owner = n.owner ?? null; entry.transactional = n.transactional === true; }
 }
   return { start, entry, entryLimits, handlerNote, missing: null };
@@ -2654,7 +2663,13 @@ export function browse(graph, args, ctx) {
   matched.sort(browseCmp(kind, sort));
   const shown = matched.slice(offset, offset + limit);
 
-  const answer = { kind, sort, items: shown, total: matched.length, counts: { ...census.counts } };
+  // The walk every row's counts come from, said as data and not only in a
+  // limit's sentence: a page that shows these counts beside another walk's has
+  // to say which mode each was counted in.
+  const answer = {
+    kind, sort, items: shown, total: matched.length, counts: { ...census.counts },
+    census: { mode: BROWSE_CENSUS_MODE, depth: BROWSE_CENSUS_DEPTH },
+  };
   if (shown.length === 0) answer.empty = { items: matched.length > 0 ? 'not-in-this-axis' : browseNoneReason(graph, ctx, kind) };
 
   const limits = [...(ctx.limits ?? []), ...entryLimits, {

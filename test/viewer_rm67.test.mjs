@@ -196,14 +196,16 @@ test('the blind spots are set out by what a reader can do, with the axes not bui
   const order = JSON.parse(ev(ctx, 'JSON.stringify(OV_GAP_GROUPS.map(([, k]) => t(k)))'));
   assert.equal(order[0], 'Inputs it did not have');
   const heads = texts(panel.querySelectorAll('.ovgaplbl'));
-  assert.ok(heads.indexOf('What it could not read') >= 0 && heads.indexOf('What this walk left out') >= 0, heads.join(' | '));
-  assert.ok(heads.indexOf('What it could not read') < heads.indexOf('What this walk left out'));
+  assert.ok(heads.indexOf('What it could not read') >= 0 && heads.indexOf('Links this mode does not follow') >= 0, heads.join(' | '));
+  assert.ok(heads.indexOf('What it could not read') < heads.indexOf('Links this mode does not follow'));
   assert.deepEqual(heads, order.filter((h) => heads.includes(h)), 'the groups keep that order');
   // The axis not built is a row of the axes table, with the engine's reason.
   const axis = byId.get('staxes').querySelector('tr#st-ov-axis-screen');
   assert.ok(axis, 'the screen axis has its row');
   assert.ok(axis.classList.contains('warn'));
   assert.match(axis.textContent, /not collected/);
+  // RM67-U2e: the engine's reason is folded under the page's words, one activation away.
+  axis.querySelector('.foldlead').onclick();
   assert.match(axis.textContent, /screenAxis\.enabled is undeclared/);
   // A lane diagnostic is a row of its own, by the engine's own code.
   const diag = byId.get('stdiags').querySelector('.stitem#st-ov-diag-TS_PREFIX_EXCLUDE_UNREAD');
@@ -213,8 +215,8 @@ test('the blind spots are set out by what a reader can do, with the axes not bui
   // the way to its row: the diagnostic opens on the lane's own remedy.
   const starts = byId.get('sgaps').querySelectorAll('button.sgap');
   assert.ok(starts[0].textContent.includes('screens: not collected'), texts(starts).join(' | '));
-  const toDiag = starts.find((c) => c.textContent.includes('TS_PREFIX_EXCLUDE_UNREAD'));
-  assert.ok(toDiag, 'Start lists the diagnostic by its code');
+  const toDiag = starts.find((c) => c.textContent.includes('unread setting: API prefix exclude list') && c.title === 'TS_PREFIX_EXCLUDE_UNREAD');
+  assert.ok(toDiag, 'Start lists the diagnostic in the page\'s words, its code on the tooltip');
   toDiag.onclick();
   assert.equal(ev(ctx, 'STATE.tab'), 'status');
   assert.match(byId.get('stdiags').querySelector('#st-ov-diag-TS_PREFIX_EXCLUDE_UNREAD').textContent, /tsBackend\.globalPrefixExclude/,

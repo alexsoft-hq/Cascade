@@ -304,5 +304,5 @@ test('Start asks for the summary once it is on screen, opens a box in place and 
   assert.equal('endpoint:' + summaries()[1].body.arguments.endpoint, ev(page.ctx, 'SUM.node'), 'naming the route it was asked about');
   // Each route opens on Trace, walked down: the button says what it asks (RM67-U2b).
   const side = host.querySelector('.flowside');
-  assert.ok(side.querySelectorAll('button').some((b) => b.textContent === 'What it uses'), side.textContent);
+  assert.ok(side.querySelectorAll('button').some((b) => b.textContent === '↓ What it uses'), side.textContent);
 });

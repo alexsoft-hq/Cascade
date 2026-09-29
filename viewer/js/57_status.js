@@ -94,12 +94,22 @@ function statusFreshness(r){
 /** What the trust level is, what it means, what would move it, and every gate and gap it names. */
 function statusTrust(r){
   const tt=r.trust || {}, lvl=tt.trustLevel || null;
-  const held=[...(tt.gatesNotShown || []), ...(tt.knownGaps || [])];
+  const held=[...(tt.gatesNotShown || []), ...(tt.knownGaps || [])].filter((g)=> !statusGapElsewhere(r.answer, g));
   return el('div',{className:'panel stfact'},[ el('h2',{textContent:t('status.trust.title')}),
     el('div',{className:'stbig', textContent: lvl ? mastSay(mastTrustKey(lvl), lvl) : t('status.trust.none')}),
     el('div',{className:'comment',textContent: lvl ? mastSay(mastTrustKey(lvl)+'.title', '') : t('mast.trust.none.title')}),
-    noGoldenSet(tt) ? el('div',{className:'comment',textContent:t('mast.trust.how')}) : null,
+    // The two commands that change the level are for whoever runs the tool, so they fold (RM67-U2e).
+    noGoldenSet(tt) ? fold('status.trust.how', [t('status.trust.how')], ()=> [el('div',{className:'comment'},[t('mast.trust.how')])]) : null,
     held.length ? el('div',{className:'ovchips'}, held.map((g)=> el('span',{className:'tag',textContent:g}))) : null ]);
+}
+/**
+ * A known gap about a Java bridge that did not run (`jpa-axis-not-shipped` on a
+ * NestJS project) is the one this place already leaves out of its axes, for the
+ * same reason (OV_BRIDGE_AXES): it would warn about a lane this stack has none of.
+ */
+function statusGapElsewhere(a, gap){
+  const m=/^(jpa|mybatisPlus)-axis-not-shipped$/.exec(String(gap));
+  return !!(m && a && ovAxisStatus(a, m[1])==='not-shipped');
 }
 /** The mode and depth every share and count on Start and here was walked in. */
 function statusCensus(a){
@@ -141,7 +151,8 @@ function statusAxisRow(a, axis, key){
     el('td',{},[ el('b',{textContent:t(key)}) ]),
     el('td',{},[ el('span',{className:'tag'+(st==='shipped' ? '' : ' warnt'), textContent:t(STATUS_AXIS_STATE[st] || STATUS_AXIS_STATE.shipped)}) ]),
     el('td',{className:'mono stsrc',textContent:statusAxisSource(a, axis)}),
-    el('td',{},[ el('div',{textContent:t(STATUS_AXIS_TOUCH[axis])}), why ? el('div',{className:'comment',textContent:why}) : null ]) ]);
+    el('td',{},[ el('div',{textContent:t(STATUS_AXIS_TOUCH[axis])}),
+      why ? fold('ov.axis.'+axis, [t('status.engine.words')], ()=> [el('div',{className:'comment engine'},[why])]) : null ]) ]);
   return tr;
 }
 
@@ -163,7 +174,7 @@ function statusItems(a){
     items.push({ src:'axis', kind:axis, key:'ov.axis.'+axis, cls:st==='not-shipped' ? 'input' : 'unresolved',
       label:t(st==='not-shipped' ? 'ov.axis.notshipped' : 'ov.axis.degraded', {axis:t(nameKey)}), count:null, note:ovAxisReason(a, axis), remedy:ovAxisRemedy(a, axis) });
   }
-  for(const g of diagGroups(a.diagnostics || [])) items.push({ src:'diag', kind:g.kind, key:'ov.diag.'+g.kind, cls:'unresolved', label:t('status.diag.label',{kind:g.kind}), count:g.count, remedy:statusDiagRemedy(a, g.kind) });
+  for(const g of diagGroups(a.diagnostics || [])) items.push({ src:'diag', kind:g.kind, key:'ov.diag.'+g.kind, cls:'unresolved', label:diagTitle(g.kind), count:g.count, remedy:statusDiagRemedy(a, g.kind) });
   const order=OV_GAP_GROUPS.map(([cls])=> cls);
   return items.map((it, i)=> [it, i]).sort((x, y)=> (order.indexOf(x[0].cls)-order.indexOf(y[0].cls)) || (x[1]-y[1])).map(([it])=> it);
 }
@@ -183,13 +194,37 @@ function statusGapsPanel(a){
 }
 /** One blind spot: its name and count, then its cause, what it touches, and what to do. */
 function statusItemRow(a, it){
-  const note=String(it.note || ''), lead=leadOf(note);
   return el('div',{className:'stitem'+(OV_GAP_TINTED.has(it.cls) ? ' warn' : ''), id:statusRowId(it.key)},[
     el('div',{className:'stitemhead'},[ el('b',{textContent:it.label}),
       it.count!=null ? el('span',{className:'ovnum',textContent:ovNum(it.count)}) : null, el('span',{className:'ovdiag',title:t('status.kind.title'),textContent:it.kind}) ]),
-    statusLine('status.cause', [ lead===note ? el('span',{textContent:note}) : fold(it.key, [lead], ()=> [el('div',{className:'comment'},[note])]) ]),
+    statusLine('status.cause', [ statusCause(a, it), statusCauseLink(a, it) ]),
     statusLine('status.touches', [ statusWords(it, 'touch'), ovGapChips(a, it.kind) ]),
     statusLine('status.todo', [ statusTodo(it) ]) ]);
+}
+/**
+ * THE CAUSE IN THE PAGE'S WORDS, the engine's sentence folded under it
+ * (RM67-U2e). A Korean page said the one line Q3 is about in English; now a
+ * kind the page has words for says it in the reader's language with the
+ * engine's count, and the engine's whole sentence is one click away. A kind
+ * with no words of the page's keeps the engine's lead, folded as before.
+ */
+function statusCause(a, it){
+  const note=String(it.note || ''), key='gap.cause.'+it.kind;
+  if(it.src==='gap' && Object.hasOwn(VIEWER_STRINGS.en, key)) {
+    return el('div',{},[ el('span',{textContent:t(key, { n:ovNum(it.count), mode:a.mode })}),
+      note ? fold(it.key+'.engine', [t('status.engine.words')], ()=> [el('div',{className:'comment engine'},[note])]) : null ]);
+  }
+  const lead=leadOf(note);
+  return lead===note ? el('span',{textContent:note}) : fold(it.key, [lead], ()=> [el('div',{className:'comment engine'},[note])]);
+}
+// The rows that are a RESULT of the mode's floor, each a way to that cause.
+const STATUS_FLOOR_RESULTS = new Set(['endpoints-without-statement', 'statements-not-reached', 'tables-not-reached']);
+/** A result row points at its cause (RM67-U2e): what did not reach, beside the links this mode did not follow. */
+function statusCauseLink(a, it){
+  const floor=(a.gaps || []).find((g)=> g.kind==='mode-floor');
+  if(!STATUS_FLOOR_RESULTS.has(it.kind) || !floor || !(floor.count>0)) return null;
+  return el('button',{type:'button', className:'mini stcauselink', textContent:t('status.cause.floor',{ n:ovNum(floor.count), mode:a.mode }),
+    onclick:()=> ovGoToGaps('ov.gap.mode-floor')});
 }
 /**
  * What to do about one blind spot: the engine's remedy where it gave one, and
@@ -223,10 +258,15 @@ function statusDiagPanel(a){
     el('h2',{},[t('status.diags.title')+' ', el('span',{className:'count',textContent:'('+groups.length+')'})]),
     el('div',{className:'panelsub',textContent:t(groups.length ? 'status.diags.lead' : 'status.diags.none')}),
     ...groups.map((g)=> el('div',{className:'stitem warn', id:statusRowId('ov.diag.'+g.kind)},[
-      el('div',{className:'stitemhead'},[ el('b',{className:'ovdiag',textContent:g.kind}), el('span',{className:'ovnum',textContent:ovNum(g.count)}),
-        g.causes.length>1 ? el('span',{className:'count',textContent:t('diag.group.causes',{k:g.causes.length})}) : null ]),
-      ...diagGroupBody('ov.diag.'+g.kind, g),
+      el('div',{className:'stitemhead'},[ el('b',{textContent:diagTitle(g.kind)}), el('span',{className:'ovnum',textContent:ovNum(g.count)}),
+        el('span',{className:'ovdiag',title:t('status.kind.title'),textContent:g.kind}) ]),
+      statusDiagWords(g),
       statusDiagTodo(a, g) ].filter(Boolean))) ]);
+}
+/** A kind's own sentences, the engine's, under one fold that says how many there are and how many differ. */
+function statusDiagWords(g){
+  const lead=[t('status.engine.words'), '  '+t('diag.group.lead',{n:g.count}), g.causes.length>1 ? '  '+t('diag.group.causes',{k:g.causes.length}) : ''];
+  return el('div',{className:'engine'},[ fold('ov.diag.'+g.kind+'.engine', lead, ()=> diagGroupBody('ov.diag.'+g.kind, g, false), null, true) ]);
 }
 /**
  * A kind of diagnostic's what to do: the engine's remedy when it gave one, that
@@ -236,5 +276,5 @@ function statusDiagPanel(a){
 function statusDiagTodo(a, g){
   const rem=statusDiagRemedy(a, g.kind), own=Object.hasOwn(VIEWER_STRINGS.en, 'diag.todo.'+g.kind);
   if(rem || (rem===null && !own)) return statusLine('status.todo', [remedyLine(rem, false)]);
-  return own ? null : statusLine('status.todo', [el('span',{textContent:t('diag.todo.any')})]);
+  return statusLine('status.todo', [el('span',{textContent:t(own ? 'diag.todo.'+g.kind : 'diag.todo.any')})]);
 }

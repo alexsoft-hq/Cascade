@@ -66,11 +66,25 @@ function traceDetailDraw(tg, got){
   else renderEntryDetail(tg, got.entry);
   // The screens stand right under the card, where the side column would drop
   // them under a long list at most widths; their own evidence rail goes last.
+  // ONE "what this answer rests on" per place (RM67-U2e): the screens answer's
+  // limits join the details' own box instead of standing in a second one.
   if(got.screens){
     const [head, ...rest] = view.children;
-    view.replaceChildren(head, traceScreensPanel(got.screens), ...rest, honesty(got.screens, 'trace.screens'));
+    const main = got.table || (got.column && got.column.ei) || got.screen || got.entry;
+    view.replaceChildren(head, traceScreensPanel(got.screens), ...rest.filter((x)=> !x.classList.contains('rail')),
+      honesty(traceDetailBasis(main, got.screens), 'trace'));
   }
   refreshShowAll();
+}
+/** Two answers' limits and cuts under one box: the main answer's basis and trust, every limit once. */
+function traceDetailBasis(main, extra){
+  const seen = new Set(), limits = [];
+  for(const l of [...(main.limits || []), ...(extra.limits || [])]){
+    const k = (l.scope || '')+'\u0000'+(l.reason || '');
+    if(!seen.has(k)){ seen.add(k); limits.push(l); }
+  }
+  const fields = [...((main.truncated && main.truncated.fields) || []), ...((extra.truncated && extra.truncated.fields) || [])];
+  return { ...main, limits, truncated:{ any:fields.some((f)=> f.nextOffset != null), fields } };
 }
 // The kinds whose details say which screens a change there is felt on.
 const TRACE_SCREENS_OF = ['column', 'table', 'statement', 'symbol'];
@@ -145,7 +159,7 @@ function traceTxPanel(tg, r){
         x.grade ? badge(x.grade) : null,
         el('button', { className:'mini', textContent:t('tab.tx'), title:t('trace.detail.tx.open'), onclick:()=> openTx(x.id) }) ]) ]))
       : [ el('li', { className:'empty', textContent:t('trace.detail.tx.none') }) ]),
-    cut ? el('div', { className:'count', textContent:t('trace.lim.page', { lane:laneTitle('services'), shown:tf.shown, total:tf.total }) }) : null,
+    cut ? el('div', { className:'count' }, richNodes(t('trace.lim.page', { n:ovNum(tf.total - tf.shown), lane:laneTitle('services'), shown:tf.shown, total:tf.total }))) : null,
   ]);
 }
 /** The Transactions tab, opened on one boundary. */

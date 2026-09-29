@@ -228,14 +228,14 @@ function ovHubBars(r,a){
   const total=ovTotal(r,'hubs.tables',rows.length);
   const kids=[ el('h2',{},[t('ov.hubtables.title')+' ',
     el('span',{className:'count',textContent:'('+total+')'})]),
-    el('div',{className:'panelsub',textContent:t('ov.hubtables.by')}) ];
+    el('div',{className:'panelsub',textContent:t('ov.hubtables.by')}), ovHubMode(a.mode) ];
   if(!rows.length){
     kids.push(el('div',{className:'empty',textContent:emptyText({hubs:ovHubEmpty(a)},'hubs')}));
     return el('div',{className:'panel'},kids);
   }
   const top=rows.reduce((m,x)=>Math.max(m,x.endpoints||0),0)||1;
   const bar=(x)=> el('div',{className:'ovbar'},[
-    el('b',{title:x.table,textContent:x.table}),
+    el('b',{className:'psplit',title:x.table}, nameSplit(x.table)),
     el('span',{className:'ovbartrack'},[ el('i',{style:'width:'+(100*(x.endpoints||0)/top).toFixed(1)+'%'}) ]),
     el('button',{className:'ovbarn mini',
       title:t('btn.impact.table.title'),
@@ -366,12 +366,13 @@ function ovNodesPanel(a){
   const nodes=a.nodes||[];
   const rows = nodes.length
     ? nodes.map((n)=> el('tr',{},[
-        el('td',{},[ kindGlyph(n.kind,12), ' '+n.kind ]),
+        // A kind the list names is said in the reader's words, its code on the title (RM67-U2e).
+        el('td',{title:n.kind},[ kindGlyph(n.kind,12), ' '+(RAIL_KIND_KEY[n.kind] ? t(RAIL_KIND_KEY[n.kind]) : n.kind) ]),
         el('td',{className:'num',textContent:ovNum(n.count)}) ]))
     : [ el('tr',{},[ el('td',{className:'empty', colSpan:2, textContent:emptyText(a.empty,'nodes')}) ]) ];
   return el('div',{className:'panel'},[
     el('h2',{},[t('ov.nodes.title')+' ', el('span',{className:'count',textContent:t('ov.nodes.count',{n:nodes.length})})]),
-    ruled([{label:'kind'},{label:'nodes',num:true}], rows) ]);
+    ruled([{label:t('ov.col.kind')},{label:t('ov.col.nodes'),num:true}], rows) ]);
 }
 function ovEdgesPanel(a){
   const edges=a.edges||[];
@@ -385,7 +386,7 @@ function ovEdgesPanel(a){
   // `Edge grades` panel now, drawn from the same field. One count, one place.
   return el('div',{className:'panel'},[
     el('h2',{},[t('ov.edges.title')+' ', el('span',{className:'count',textContent:'('+edges.length+')'})]),
-    ruled([{label:'type'},{label:'grade'},{label:'edges',num:true}], rows) ]);
+    ruled([{label:t('ov.col.type')},{label:t('ov.col.grade')},{label:t('ov.col.edges'),num:true}], rows) ]);
 }
 
 function ovCodePanel(a){
@@ -393,11 +394,11 @@ function ovCodePanel(a){
   const row=(k,v,title)=> el('tr',{title:title||''},[
     el('td',{textContent:k}), el('td',{className:'num',textContent:ovNum(v)}) ]);
   return el('div',{className:'panel'},[ el('h2',{textContent:t('ov.code.title')}),
-    ruled([{label:'what'},{label:'count',num:true}], [
-      row('symbols', c.symbols, t('ov.code.symbols.title')),
-      row('external types', c.external, t('ov.code.external.title')),
+    ruled([{label:t('ov.col.what')},{label:t('ov.col.count'),num:true}], [
+      row(t('ov.code.symbols'), c.symbols, t('ov.code.symbols.title')),
+      row(t('ov.code.external'), c.external, t('ov.code.external.title')),
       row('@Transactional', c.transactional, t('ov.code.tx.title')),
-      row('mapper methods', c.mapperMethods, t('ov.code.mapper.title')) ]),
+      row(t('ov.code.mapper'), c.mapperMethods, t('ov.code.mapper.title')) ]),
     c.statementsWithoutMapper? el('div',{className:'comment',style:'margin-top:8px',
       textContent:t('ov.code.nomapper',{n:ovNum(c.statementsWithoutMapper)})}) : null ]);
 }
@@ -482,8 +483,10 @@ function ovConnectedPanel(a){
     }
     return el('div',{className:'ovchips'}, kids);
   };
+  // The heading counts what is under it (RM67-U2e): "(0)" over one row of calls
+  // nobody serves read as a contradiction.
   const kids=[ el('h2',{},[t('ov.connected.title')+' ',
-    el('span',{className:'count',textContent:'('+rows.length+')'})]),
+    el('span',{className:'count',textContent: missing.length ? t('ov.connected.count',{ n:rows.length, m:missing.length }) : '('+rows.length+')'})]),
     el('div',{className:'panelsub',textContent:t('ov.connected.note')}) ];
   for(const p of rows){
     kids.push(el('button',{className:'ovconn', title:t('ov.connected.open.title',{p:p.project}),
@@ -528,8 +531,8 @@ const OV_HUB_TOP = 5;
 // The top five stand on the page; the rest of what the ANSWER carries opens
 // under them. The line never says "all": the answer holds ten of forty-nine and
 // says so, and the forty-nine is printed in the heading beside the title.
-function ovHubPanel(title, total, rows, heads, mkRow, key, empty){
-  const kids=[ el('h2',{},[t(title)+' ', el('span',{className:'count',textContent:'('+total+')'})]) ];
+function ovHubPanel(title, total, rows, heads, mkRow, key, empty, sub){
+  const kids=[ el('h2',{},[t(title)+' ', el('span',{className:'count',textContent:'('+total+')'})]), sub || null ];
   if(!rows.length){ kids.push(ruled(heads, [ el('tr',{},[ el('td',{className:'empty', colSpan:heads.length, textContent:empty}) ]) ])); return el('div',{className:'panel'},kids); }
   kids.push(ruled(heads, rows.slice(0,OV_HUB_TOP).map(mkRow)));
   if(rows.length>OV_HUB_TOP) kids.push(el('div',{className:'ovhubmore'},[
@@ -537,17 +540,14 @@ function ovHubPanel(title, total, rows, heads, mkRow, key, empty){
       ()=> [ruled(heads, rows.slice(OV_HUB_TOP).map(mkRow))]) ]));
   return el('div',{className:'panel'},kids);
 }
-function ovHubTables(r,a){
-  const rows=(a.hubs&&a.hubs.tables)||[];
-  return ovHubPanel('ov.hubtables.title', ovTotal(r,'hubs.tables',rows.length), rows,
-    [{label:'table'},{label:'endpoints',num:true},{label:'statements',num:true}],
-    (x)=> el('tr',{},[
-      el('td',{className:'wrapcell'},[ kindGlyph('table',12), ' ',
-        el('a',{className:'id clickable',textContent:x.table,title:'which endpoints can reach this table',onclick:()=>openTrace({kind:'table', id:x.table}, 'up')}) ]),
-      el('td',{className:'num',textContent:ovNum(x.endpoints)}),
-      el('td',{className:'num',textContent:ovNum(x.statements)}) ]),
-    'ov.hubtables.rest', emptyText({hubs:ovHubEmpty(a)},'hubs'));
-}
+/**
+ * THE MODE A LIST WAS COUNTED IN, under its heading (RM67-U2e). The busiest
+ * lists follow the mode of the map's control through the overview asked in it;
+ * the screens come from a census walked in one mode only, and say which.
+ */
+const ovHubMode=(mode)=> mode ? el('div',{className:'count hubmode',textContent:t('ov.hub.mode',{ mode })}) : null;
+/** A name in a ranking, cut from the middle so the part that tells two apart stays (a route's last segments). */
+const ovHubName=(id, title, go)=> el('a',{className:'id clickable psplit', title:id+'\n'+title, onclick:go}, pathLabel(id));
 // THE OTHER END OF THE ROUND TRIP, listed the way the API hubs are. The rows
 // are one `browse kind=screen sort=tables` answer, and a click walks the chain
 // down from that screen. Nothing is drawn where the axis is not shipped: the
@@ -566,11 +566,11 @@ function ovHubScreens(a){
     el('span',{className:'count',textContent: total==null?'':('('+ovNum(total)+')')})]);
   kids.push(el('div',{className:'panelsub',textContent:t('ov.hubscreens.by')}));
   if(!b){ kids.push(el('div',{className:'empty',textContent:t('load.overview')})); return el('div',{className:'panel'},kids); }
-  const heads=[{label:'screen'},{label:'tables',num:true},{label:'APIs',num:true}];
+  kids.push(ovHubMode(b.answer.census && b.answer.census.mode));
+  const heads=[{label:t('ov.col.screen')},{label:t('ov.col.tables'),num:true},{label:t('ov.col.apis'),num:true}];
   const row=(x)=> el('tr',{},[
     el('td',{className:'wrapcell'},[ kindGlyph('screen',12), ' ',
-      el('a',{className:'id clickable',textContent:x.screen,title:t('btn.flow.screen.title'),
-        onclick:()=>openTrace({kind:'screen', id:x.screen}, 'down')}) ]),
+      ovHubName(x.screen, t('btn.flow.screen.title'), ()=>openTrace({kind:'screen', id:x.screen}, 'down')) ]),
     el('td',{className:'num',textContent:ovNum(x.tables)}),
     el('td',{className:'num',textContent:ovNum(x.endpoints)}) ]);
   kids.push(rows.length
@@ -582,13 +582,13 @@ function ovHubScreens(a){
 function ovHubEndpoints(r,a){
   const rows=(a.hubs&&a.hubs.endpoints)||[];
   return ovHubPanel('ov.hubendpoints.title', ovTotal(r,'hubs.endpoints',rows.length), rows,
-    [{label:'endpoint'},{label:'tables',num:true},{label:'statements',num:true}],
+    [{label:t('ov.col.endpoint')},{label:t('ov.col.tables'),num:true},{label:t('ov.col.statements'),num:true}],
     (x)=> el('tr',{},[
       el('td',{className:'wrapcell'},[ kindGlyph('endpoint',12), ' ',
-        el('a',{className:'id clickable',textContent:x.endpoint,title:'the chain this call runs through',onclick:()=>openTrace({kind:'endpoint', id:x.endpoint}, 'down')}) ]),
+        ovHubName(x.endpoint, t('btn.flow.title'), ()=>openTrace({kind:'endpoint', id:x.endpoint}, 'down')) ]),
       el('td',{className:'num',textContent:ovNum(x.tables)}),
       el('td',{className:'num',textContent:ovNum(x.statements)}) ]),
-    'ov.hubendpoints.rest', emptyText({hubs:ovHubEmpty(a)},'hubs'));
+    'ov.hubendpoints.rest', emptyText({hubs:ovHubEmpty(a)},'hubs'), ovHubMode(a.mode));
 }
 // THE "THIS PACK" CARD IS GONE. Every field it printed is already on this
 // screen: project, digest, lanes and base commit in the masthead's title block,

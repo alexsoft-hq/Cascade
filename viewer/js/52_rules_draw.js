@@ -54,13 +54,24 @@ function rulesListPanel(shown){
     kids.push(el('div',{className:'rulegrp'},[ t(key), el('span',{className:'count',textContent:' ('+rows.length+')'}) ]));
     for(const r of rows) kids.push(rulesRow(r));
   }
-  if(!shown.length) kids.push(el('div',{className:'empty',textContent:t('rules.none.match')}));
+  if(!shown.length) kids.push(rulesNoneShown(a));
   const hidden=(a.rules||[]).length-shown.length;
   if(RULES.scope==='here' && hidden>0) {
     kids.push(el('div',{className:'rulemore'},[ t('rules.more.idle',{n:hidden}), ' ',
       el('button',{className:'mini',textContent:t('rules.more.show'),onclick:()=> rulesSetScope('all')}) ]));
   }
   return el('div',{className:'panel ruleslist'}, kids);
+}
+/**
+ * NOTHING ON THE LIST. Opened on what applies here, a project no rule drew
+ * anything for says so plainly and says it is normal where the project uses no
+ * framework a pack describes (RM67-U2e): the tab used to fall back to all the
+ * rules and open on one about another stack. A filter that matches nothing is
+ * the page's doing, and says that instead.
+ */
+function rulesNoneShown(a){
+  const here=RULES.scope==='here' && !RULES.q.trim() && !RULES.kind && !RULES.lane && a.totals.here===0;
+  return el('div',{className:here ? 'rulenone' : 'empty', textContent:t(here ? 'rules.none.here' : 'rules.none.match')});
 }
 function rulesRow(r){
   const on=r.id===RULES.pick;
@@ -88,7 +99,7 @@ function rulesGrades(r){
 
 // ---- one rule ---------------------------------------------------------------
 function rulesDetailPanel(row){
-  if(!row) return el('div',{className:'panel',textContent:t('rules.empty')});
+  if(!row) return el('div',{className:'panel',textContent:t(RULES.list.answer.totals.rules ? 'rules.none.pick' : 'rules.empty')});
   const d=RULES.detail.get(row.id+'@'+RULES.offset);
   if(!d) return el('div',{className:'panel'},[ rulesHead(row), el('div',{className:'empty',textContent:t('rules.loading')}) ]);
   if(d.error) return el('div',{className:'panel'},[ rulesHead(row), errPanel(d.error) ]);

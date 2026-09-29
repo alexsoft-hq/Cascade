@@ -23,7 +23,10 @@
 // tables, routes and screens as places to start. Every number is the one
 // `overview` answer's; the map is the `summary` tool's (50_summary.js).
 
-const START = { target:null };
+// `mode` is the mode the map, the shares and the busiest lists are looking in
+// when the reader moved the map's control off the landing answer's (null: that
+// one), and `byMode` the overview answers asked for it (RM67-U2e).
+const START = { target:null, mode:null, byMode:new Map(), seq:0 };
 // The typeahead's own state, shaped like a chain view's so the one typeahead
 // (42_flow.js chainSuggest, chainCommit) serves this box too.
 const STARTV = { name:'start', direction:'start', entryId:'sentry', sugId:'ssug',
@@ -92,10 +95,46 @@ function renderStart(r){
   const a=r.answer;
   renderStartAsk();
   renderStartScope(r);
+  renderStartLead(a);
   renderStartGaps(a);
+  renderStartNumbers();
+  if(STATE.tab==='start') summaryOnScreen();
+}
+/** The answer the shares and the busiest lists are drawn from: the mode Start is looking in, once it is in. */
+function startNumbersResp(){
+  const r=OV.resp;
+  if(!r) return null;
+  return (START.mode && START.byMode.get(START.mode)) || r;
+}
+/** The shares and the busiest lists, under a line that says the mode and depth they were counted in. */
+function renderStartNumbers(){
+  const r=startNumbersResp();
+  if(!r) return;
+  const a=r.answer;
+  setKids(byId('skpimode'), el('span',{textContent:t('start.kpi.mode',{ mode:a.mode, depth:depthText(a.depth) })}));
   byId('ovcards').replaceChildren(...ovKpis(a));
   setKids(byId('shubs'), ovHubBars(r, a), ovHubEndpoints(r, a), ovHubScreens(a));
-  if(STATE.tab==='start') summaryOnScreen();
+}
+/**
+ * ONE MODE FOR WHAT START COUNTS (RM67-U2e). The map's control used to move the
+ * map alone, and the shares and the busiest lists under it stayed in the mode
+ * the page opened in: two numbers for one thing, side by side. Now the control
+ * moves all three, asking the overview once in that mode. The gaps and
+ * Analysis status stay in the landing answer's mode, and say it.
+ */
+async function startSetMode(mode){
+  if(!OV.resp || !Object.hasOwn(MODE_ADMITS, mode)) return;
+  START.mode=mode===OV.resp.answer.mode ? null : mode;
+  summarySetMode(mode);
+  renderStartLead(OV.resp.answer);
+  if(!START.mode || START.byMode.has(mode)){ renderStartNumbers(); return; }
+  const mine=++START.seq;
+  let r;
+  try{ r=await api('overview', { mode }); }
+  catch(e){ if(!stale(e) && mine===START.seq) byId('ovcards').replaceChildren(errPanel(e)); return; }
+  if(mine!==START.seq) return;
+  START.byMode.set(mode, r);
+  renderStartNumbers();
 }
 /** Start on screen: the map is asked for once the landing answer is in. */
 function startOnScreen(){
@@ -105,9 +144,10 @@ function startOnScreen(){
 /** The project is being left: its target, its lists and its map with it. */
 function startReset(){
   START.target=null; STARTV.pick=null;
+  START.mode=null; START.byMode.clear(); START.seq++;
   const input=byId('sentry'); if(input) input.value='';
   closeSug(STARTV);
-  for(const id of ['sscope','sgaps','ovcards','shubs']) byId(id).replaceChildren();
+  for(const id of ['slead','sscope','sgaps','skpimode','ovcards','shubs']) byId(id).replaceChildren();
   summaryReset();
   renderStartAsk();
 }
@@ -179,9 +219,9 @@ function startAxisChip(a, axis, key){
 const startChangesAnswers=(it)=> it.cls==='input' || it.cls==='unresolved';
 function renderStartGaps(a){
   const all=statusItems(a), mine=all.filter(startChangesAnswers);
-  const guessed=ovRoutesGuessed(a);
+  const guessed=startLeadHasRoutes(a) ? null : ovRoutesGuessed(a);
   const rows=mine.slice(0, START_GAPS).map((it)=> el('li',{},[
-    el('button',{type:'button', className:'sgap warn', onclick:()=> ovGoToGaps(it.key)},[
+    el('button',{type:'button', className:'sgap warn', title:it.kind, onclick:()=> ovGoToGaps(it.key)},[
       el('span',{textContent:it.label}), it.count!=null ? el('span',{className:'ovnum',textContent:ovNum(it.count)}) : null ]),
     remedyLine(it.remedy) ]));
   setKids(byId('sgaps'),

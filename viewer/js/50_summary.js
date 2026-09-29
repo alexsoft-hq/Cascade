@@ -26,6 +26,8 @@ const SUM = { resp:null, seq:0, mode:'conservative', asking:null, byMode:new Map
 const SUM_OTHERS = '(others)';
 const SUM_ROWS = 20;      // rows an open box lists before "show all"
 const SUM_MEMBERS = 8;    // members a path lists beside the picture before its fold
+const SUM_LABELS = 12;    // lines the whole map labels with their counts; more are a knot
+const SUM_LABEL_AT = [0.5, 0.35, 0.65, 0.25, 0.75];   // where along a line its count may sit, tried in turn
 const SUM_MODE_KEY = { strict:'mode.strict', conservative:'mode.conservative', heuristic:'mode.heuristic' };
 const SUM_MODE_GRADE = { strict:'EXACT', conservative:'SOUND_SET', heuristic:'HEURISTIC' };
 // WHAT A BOX ON THE LEFT IS CALLED (RM67-U2d), by the rule the answer names.
@@ -137,7 +139,7 @@ function summaryRedraw(){
 }
 /** The title, the mode it was walked in, and what made the boxes. */
 function summaryHead(a){
-  const sel=el('select',{id:'summode', title:t('summary.mode.title'), onchange:(e)=> summarySetMode(e.target.value)},
+  const sel=el('select',{id:'summode', title:t('summary.mode.title'), onchange:(e)=> startSetMode(e.target.value)},
     Object.keys(SUM_MODE_KEY).map((m)=> el('option',{value:m, textContent:t(SUM_MODE_KEY[m])+' ('+SUM_MODE_GRADE[m]+')'})));
   sel.value=SUM.mode;
   return el('div',{className:'sumtop'},[
@@ -189,9 +191,11 @@ function summaryEmptyNote(a){
   const grades=Object.keys(by).filter((g)=> by[g]>0).join(', ');
   return el('div',{className:'sumempty'},[
     el('span',{textContent: w.byMode>0 ? t('summary.none.floor',{mode:a.mode, n:ovNum(w.byMode), grades}) : t('summary.none.tables',{mode:a.mode})}),
-    wider ? el('button',{type:'button', className:'mini', textContent:t('chain.empty.switch',{mode:wider}), onclick:()=> summarySetMode(wider)}) : null,
+    wider ? el('button',{type:'button', className:'mini', textContent:t('chain.empty.switch',{mode:wider}), onclick:()=> startSetMode(wider)}) : null,
     summaryRouteFix(a.mode, by) ]);
 }
+/** Is the map in the landing answer's mode, where Start's lead line already names the routes that stop it? */
+const summaryLeadSaysIt=(a, mode)=> mode===a.mode && startLeadHasRoutes(a);
 /** Do the routes' own addresses carry a grade this map's walks left out? */
 const summaryGuessCut=(by, rg)=> Object.keys(by).some((g)=> by[g]>0 && rg[g]>0);
 /**
@@ -203,6 +207,8 @@ const summaryGuessCut=(by, rg)=> Object.keys(by).some((g)=> by[g]>0 && rg[g]>0);
 function summaryRouteFix(mode, by){
   const a=OV.resp ? OV.resp.answer : null, guessed=a ? ovRoutesGuessed({ mode, reach:a.reach }) : null;
   if(!guessed || !summaryGuessCut(by, a.reach.routeGrades || {})) return null;
+  // Start's first line already says it, with the same fix (RM67-U2e).
+  if(summaryLeadSaysIt(a, mode)) return null;
   return el('div',{className:'sumroutefix'},[ el('span',{textContent:guessed}), remedyLine(a.routeRemedy) ]);
 }
 
@@ -272,7 +278,28 @@ function drawSummaryLinks(a, picture, svg, boxes){
   if(!picture.getBoundingClientRect || picture.offsetParent===null) return;
   const pr=picture.getBoundingClientRect();
   svg.setAttribute('width', pr.width); svg.setAttribute('height', pr.height);
-  svg.replaceChildren(...summaryLines(a, boxes).map((l)=> summaryPath(l, pr)).filter(Boolean));
+  // A LINE SAYS WHAT IT CARRIES (RM67-U2e), where the lines are few enough to
+  // read: a box opened, or a map of a dozen lines. Sixty labels would be a knot.
+  const lines=summaryLines(a, boxes), labels=!!SUM.sel || lines.length<=SUM_LABELS;
+  const placed=[], fit=summaryLabelFit(pr, placed);
+  svg.replaceChildren(...lines.flatMap((l)=> summaryPath(l, pr, labels && fit)));
+}
+/**
+ * Where a line's count goes: on its own curve, at the first of a few points
+ * along it where it does not cover a count already placed; nowhere when every
+ * point would (the count stays on the line's title). With no layout to measure
+ * (a picture not on screen yet) every count is placed at the middle.
+ */
+function summaryLabelFit(pr, placed){
+  return (text, curve)=>{
+    for(const at of SUM_LABEL_AT){
+      const [x, y]=curve(at), w=text.length*6.8+8, box={ l:x-w/2, r:x+w/2, t:y-16, b:y };
+      if(pr.width && placed.some((o)=> box.l<o.r && o.l<box.r && box.t<o.b && o.t<box.b)) continue;
+      placed.push(box);
+      return [x, y];
+    }
+    return null;
+  };
 }
 /** The lines on screen: every link, the open box's own, or the paths through the picked node. */
 function summaryLines(a, boxes){
@@ -280,18 +307,21 @@ function summaryLines(a, boxes){
   if(th) return summaryThroughLines(th, boxes);
   return a.links.filter((l)=> !SUM.sel || SUM.sel==='g:'+l.group || SUM.sel==='f:'+l.family)
     .map((l)=> ({ from:boxes.get('g:'+l.group), to:boxes.get('f:'+l.family), grade:l.grade, weight:l.tables,
-      group:l.group, family:l.family, tip:t('summary.link.title',{tables:l.tables, routes:l.endpoints, grade:l.grade}) }));
+      group:l.group, family:l.family, tip:t('summary.link.title',{tables:l.tables, routes:l.endpoints, grade:l.grade}),
+      label:t('summary.link.label',{routes:l.endpoints, tables:l.tables}) }));
 }
 /** A route's lines run from its row to each family it reaches; a table's from each group to its row. */
 function summaryThroughLines(th, boxes){
   const row=SUM.rowEls.get(th.node);
   if(th.node.startsWith('endpoint:')) return th.links.map((l)=> ({ from:row, to:boxes.get('f:'+l.family), grade:l.grade,
-    weight:l.tables.length, group:th.group, family:l.family, tip:t('summary.through.route.title',{n:l.tables.length, grade:l.grade}) }));
+    weight:l.tables.length, group:th.group, family:l.family, tip:t('summary.through.route.title',{n:l.tables.length, grade:l.grade}),
+    label:t('summary.through.tables',{n:l.tables.length}) }));
   return th.links.map((l)=> ({ from:boxes.get('g:'+l.group), to:row, grade:l.grade,
-    weight:l.endpoints.length, group:l.group, family:th.family, tip:t('summary.through.table.title',{n:l.endpoints.length, grade:l.grade, ...summaryNouns()}) }));
+    weight:l.endpoints.length, group:l.group, family:th.family, tip:t('summary.through.table.title',{n:l.endpoints.length, grade:l.grade, ...summaryNouns()}),
+    label:t('summary.through.routes',{n:l.endpoints.length}) }));
 }
-function summaryPath(l, pr){
-  if(!l.from || !l.to) return null;
+function summaryPath(l, pr, labels){
+  if(!l.from || !l.to) return [];
   const f=summaryAnchor(l.from), g=summaryAnchor(l.to);
   const x1=f.right-pr.left, y1=f.mid-pr.top, x2=g.left-pr.left, y2=g.mid-pr.top, dx=(x2-x1)/2;
   const p=svgEl('path',{ d:'M'+x1+','+y1+' C'+(x1+dx)+','+y1+' '+(x2-dx)+','+y2+' '+x2+','+y2, fill:'none',
@@ -301,7 +331,18 @@ function summaryPath(l, pr){
   const tip=svgEl('title');
   tip.textContent=l.tip;
   p.append(tip);
-  return p;
+  return summaryLabelled(p, l.label, labels, [x1, y1, x2, y2]);
+}
+// A point on a cubic Bezier: u along the curve, a..d one coordinate of its four points.
+const summaryBez=(u, a, b, c, d)=> ((1-u)**3)*a+3*((1-u)**2)*u*b+3*(1-u)*u*u*c+(u**3)*d;
+/** A line, and its count on a halo of the ground, so it reads over the lines behind it. */
+function summaryLabelled(p, text, fit, [x1, y1, x2, y2]){
+  const dx=(x2-x1)/2;
+  const at=(fit && text) ? fit(text, (u)=> [summaryBez(u, x1, x1+dx, x2-dx, x2), summaryBez(u, y1, y1, y2, y2)]) : null;
+  if(!at) return [p];
+  const e=svgEl('text',{ class:'sumlbl', x:at[0], y:at[1]-4, 'text-anchor':'middle' });
+  e.textContent=text;
+  return [p, e];
 }
 /** Where a line meets an element: its edges, and its middle kept inside a list that scrolls. */
 function summaryAnchor(node){
@@ -357,7 +398,7 @@ function summaryThroughList(th, kind){
 /** A path's routes or tables, the first few and the rest under a fold, each a way into Trace. */
 function summaryMembers(ids){
   const row=(id)=>{ const at=id.indexOf(':'), k=id.slice(0, at), key=id.slice(at+1);
-    return el('li',{},[ el('span',{className:'id',title:key,textContent:key}), traceButton(k, key, k==='endpoint' ? 'down' : 'up') ]); };
+    return el('li',{},[ el('span',{className:'id psplit',title:key}, k==='endpoint' ? pathLabel(key) : nameSplit(key)), traceButton(k, key, k==='endpoint' ? 'down' : 'up') ]); };
   const rest=ids.slice(SUM_MEMBERS);
   return el('ul',{className:'list'},[ ...ids.slice(0, SUM_MEMBERS).map(row),
     rest.length ? el('li',{},[ fold('summary.members', [t('summary.members.more',{n:rest.length})], ()=> [el('ul',{className:'list'}, rest.map(row))]) ]) : null ].filter(Boolean));

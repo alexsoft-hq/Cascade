@@ -27,51 +27,12 @@
       <span class="msep" aria-hidden="true">
         ·
       </span>
-      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the counts along the chain, the fingerprint of this build and the commit it was made from" type="button">counts and build</button>
       <span id="mbuild" class="mbuild hidden">…</span>
     </div>
-    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
-      <span class="crlane" title="we built 7 screen(s) from 7 route declaration(s) and 0 page(s) a controller renders, and part of that is not the whole picture: 5 of 7 route declaration(s) name a component this lane could not resolve to a file it read, so those screens render nothing here.">
-        screens
-        <b>7 ~</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is how the routes are named, not a module anyone declared. Structure and Trace group routes this way too, and the map on Start says what its own boxes are.">
-        api groups by path
-        <b>3</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        endpoints
-        <b>12</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.">
-        services
-        <b>4</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty">
-        SQL
-        <b>5 ~</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        tables
-        <b>2</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT">
-        columns
-        <b>6 ~</b>
-      </span>
-    </div>
+    <div id="crail" class="crail hidden" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">…</div>
     <div id="mchips" class="mchips">
-      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
-        <span class="mdot" aria-hidden="true"></span>
-        <span id="mfreshsr" class="sronly">freshness unknown</span>
-        <span id="mfresh"></span>
-      </span>
+      <span id="mfreshchip" class="mchip quiet hidden" title="there is no git commit to compare with, so nothing says whether this build is behind your working tree. It is not an error.  freshness unknown  basis.freshness.verdict">…</span>
       <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
       <span id="mtracechip" class="mchip quiet hidden">…</span>
       <span id="mlimitcell">
@@ -80,7 +41,7 @@
             <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
           </svg>
           <span class="foldtext">
-            11 limits
+            11 project limits
           </span>
         </button>
       </span>
@@ -98,27 +59,29 @@
     </div>
     <div id="proj" class="mnote"></div>
     <div id="snapbar" class="snapbar hidden" role="note"></div>
-    <div class="tabs" role="tablist">
-      <button class="tab" aria-selected="false" data-place="start" data-t="tab.start" onclick type="button">Start</button>
-      <button class="tab active" aria-selected="true" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
-      <button class="tab" aria-selected="false" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
-      <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
-      <button class="tab" aria-selected="false" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
+    <div class="tabrow">
+      <div class="tabs" role="tablist">
+        <button class="tab" aria-selected="false" data-place="start" data-t="tab.start" onclick type="button">Start</button>
+        <button class="tab active" aria-selected="true" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
+        <button class="tab" aria-selected="false" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
+        <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
+        <button class="tab" aria-selected="false" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
+      </div>
+      <div id="subtabs" class="subtabs hidden" role="tablist"></div>
     </div>
-    <div id="subtabs" class="subtabs hidden" role="tablist"></div>
   </header>
   <div class="wrap">
     <div id="tab-start" class="hidden">…</div>
     <div id="tab-trace">
       <div class="searchbar">
         <button id="tdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" onclick title="open the list of things you can pick from">Browse</button>
-        <div style="position:relative;flex:1;min-width:240px">
+        <div style="position:relative;flex:1;min-width:160px">
           <input id="tentry" autocomplete="off" data-t-ph="trace.entry.ph" placeholder="an API, screen, table, column, SQL or method" style="width:100%" type="text" value="/things/list"></input>
           <div id="tsug" class="sug hidden"></div>
         </div>
         <button id="tdraw" class="primary" data-t="btn.trace" onclick>Trace</button>
         <span id="tdir" class="seg tdir" data-t-title="trace.dir.title" title="which way to read the target. Only the ways this kind of target has are shown.">
-          <button class="on" aria-pressed="true" onclick title="follow it down: the code it runs and the tables it ends at" type="button">What it uses</button>
+          <button class="on" aria-pressed="true" onclick title="follow it down: the code it runs and the tables it ends at" type="button">↓ What it uses</button>
           <button aria-pressed="false" onclick title="what it is, as lists: its SQL, its columns with reads and writes, or the transactions it runs through" type="button">Details</button>
         </span>
         <select id="tmode" data-t-title="mode.title" onchange title="which links the walk follows. strict: only proven links. conservative: also candidate sets, sure to hold the real target. heuristic: also guesses from conventions, to check. No mode says a call will run or a change will break, and none follows a link decided at run time or one the analysis could not tell." value="conservative">
@@ -128,7 +91,7 @@
         </select>
         <details id="topts" class="tbmenu">
           <summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
-          <div class="tbmenubody">
+          <div class="tbmenubody tbcol">
             <label class="tbfield">
               <span data-t="tb.depth">depth</span>
               <select id="tdepth" data-t-title="trace.depth.title" onchange title="depth: the most links a walk follows from the target. All, the default, follows every one, as every tool does; a number narrows the walk, and what lies past it is unknown, not absent.">
@@ -164,6 +127,8 @@
               <button data-t="view.layers" data-view="layers" onclick>by hop</button>
             </span>
             <button id="tflow" aria-pressed="true" onclick title="the dots run the way the call goes: group, then endpoint, then table. Click to stop them.">Flow on</button>
+            <button id="tedits" data-t="explore.edits" data-t-title="explore.edits.title" onclick title="what your uncommitted git changes would affect">What my uncommitted edits touch</button>
+            <button id="tshowall" class="showall" data-t="trace.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Start over: nothing picked</button>
           </div>
         </details>
         <details id="texports" class="tbmenu">
@@ -178,8 +143,6 @@
             </button>
           </div>
         </details>
-        <button id="tedits" data-t="explore.edits" data-t-title="explore.edits.title" onclick title="what your uncommitted git changes would affect">My edits</button>
-        <button id="tshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" onclick title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
       </div>
       <div class="hint hintfold" data-t-fold="hint.trace">
         <div class="fold">
@@ -188,7 +151,7 @@
               <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
             </svg>
             <span class="foldtext">
-              Pick one thing, then read what it uses, where it is used, or what it is.
+              Pick one thing, then read what it uses, where it is used, or its details.
             </span>
           </button>
           <div class="foldbody"></div>
@@ -224,6 +187,7 @@
                 <option value="name">name</option>
               </select>
               <span id="tcount" class="brcount"></span>
+              <span id="tcountmode" class="brcount brmode" data-t-title="rail.count.mode.title" title="the numbers on these rows come from one walk of the whole project in this mode. Trace counts in the mode on its own control, so the two can differ."></span>
               <button id="tclose" class="brclose" data-t-title="rail.close" onclick title="Close the list">
                 &#x2715;
               </button>
@@ -238,17 +202,46 @@
         </div>
         <div class="flowpane">
           <div id="tracehead" class="tracehead" role="note">
-            <span class="tquestion">
-              <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
-                <rect fill="none" height="7.2" rx="1" stroke="#F9A8D4" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="2.4"></rect>
-                <line stroke="#F9A8D4" stroke-width="1.2" x1="1.7999999999999998" x2="10.2" y1="4.6" y2="4.6"></line>
-              </svg>
-              What it uses:
-              <code class="id">/things/list</code>
-            </span>
-            <span>mode conservative</span>
-            <span title="depth: the most links a walk follows from the target. All, the default, follows every one, as every tool does; a number narrows the walk, and what lies past it is unknown, not absent.">depth not capped</span>
-            <span class="tnodir">A screen is the top of the chain, so nothing uses it.</span>
+            <div class="tquestionrow">
+              <span class="tquestion">
+                <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
+                  <rect fill="none" height="7.2" rx="1" stroke="#F9A8D4" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="2.4"></rect>
+                  <line stroke="#F9A8D4" stroke-width="1.2" x1="1.7999999999999998" x2="10.2" y1="4.6" y2="4.6"></line>
+                </svg>
+                ↓ What it uses:
+                <code class="id">/things/list</code>
+              </span>
+            </div>
+            <div class="tanswer">
+              <b class="tanswersay">From here it reaches 2 APIs and 1 table.</b>
+              <span class="tanswermode">counted in conservative, depth not capped</span>
+            </div>
+            <div class="tends">
+              <div class="tend">
+                <button class="tendhead" onclick title="go to this lane in the picture" type="button">
+                  <span>endpoint</span>
+                  <span class="count">2</span>
+                </button>
+                <button class="tendrow psplit" onclick title="GET /orders/{id}" type="button">
+                  <span class="phead">GET /orders/</span>
+                  <span class="ptail">{id}</span>
+                </button>
+                <button class="tendrow psplit" onclick title="GET /things/list" type="button">
+                  <span class="phead">GET /things/</span>
+                  <span class="ptail">list</span>
+                </button>
+              </div>
+              <div class="tend">
+                <button class="tendhead" onclick title="go to this lane in the picture" type="button">
+                  <span>table</span>
+                  <span class="count">1</span>
+                </button>
+                <button class="tendrow psplit" onclick title="thing" type="button">
+                  <span class="ptail">thing</span>
+                </button>
+              </div>
+            </div>
+            <div class="tnodir">A screen is the top of the chain, so nothing uses it.</div>
           </div>
           <div id="tracestrip" class="fstrip">
             <div class="fstripinfo">
@@ -259,25 +252,30 @@
                 </svg>
                 <span class="fstripname">/things/list</span>
               </span>
-              <button class="fstripchip" onclick title="bring this lane into view">
+              <button class="fstripchip" onclick title="go to this lane in the picture">
                 <span>frontend function</span>
                 <span class="count">4</span>
+                <span class="fstripgo">→</span>
               </button>
-              <button class="fstripchip" onclick title="bring this lane into view">
+              <button class="fstripchip" onclick title="go to this lane in the picture">
                 <span>endpoint</span>
                 <span class="count">2</span>
+                <span class="fstripgo">→</span>
               </button>
-              <button class="fstripchip" onclick title="bring this lane into view">
+              <button class="fstripchip" onclick title="go to this lane in the picture">
                 <span>service layer</span>
                 <span class="count">4</span>
+                <span class="fstripgo">→</span>
               </button>
-              <button class="fstripchip" onclick title="bring this lane into view">
+              <button class="fstripchip" onclick title="go to this lane in the picture">
                 <span>mapper statement</span>
                 <span class="count">2</span>
+                <span class="fstripgo">→</span>
               </button>
-              <button class="fstripchip" onclick title="bring this lane into view">
+              <button class="fstripchip" onclick title="go to this lane in the picture">
                 <span>table</span>
                 <span class="count">1</span>
+                <span class="fstripgo">→</span>
               </button>
             </div>
             <input class="fstripfind" data-t-ph="chain.find.ph" data-t-title="chain.find.title" placeholder="find in this picture" title="find a row by name or id. A folded row that matches is opened, and Enter goes to the next one." type="search"></input>
@@ -795,7 +793,7 @@ read">
         <div id="traceside" class="flowside">
           <div class="panel tlimits">
             <h2>What limited this answer</h2>
-            <div class="comment">No cap cut this answer, and every lane is shown whole.</div>
+            <div class="comment">No cap cut this answer: it was followed to the end.</div>
           </div>
           <div class="panel">
             <h2>how to read the lines</h2>
@@ -810,7 +808,7 @@ read">
                   </span>
                   <span class="comment">proven: the source or a framework contract states it</span>
                 </span>
-                <span class="count">9 connections</span>
+                <span class="count">lines 9, row badges 4</span>
               </li>
               <li>
                 <span style="display: flex; align-items: center; gap: 7px">
@@ -822,7 +820,7 @@ read">
                   </span>
                   <span class="comment">a candidate set sure to hold the real target</span>
                 </span>
-                <span class="count">6 connections</span>
+                <span class="count">lines 6, row badges 9</span>
               </li>
               <li>
                 <span style="display: flex; align-items: center; gap: 7px">
@@ -837,7 +835,29 @@ read">
                   </span>
                   <span class="comment">a guess from a convention or an incomplete reading; check it</span>
                 </span>
-                <span class="count">0 connections</span>
+                <span class="count">lines 0, row badges 0</span>
+              </li>
+              <li>
+                <span style="display: flex; align-items: center; gap: 7px">
+                  <svg aria-hidden="true" height="9" width="38">
+                    <line stroke="#7C89AD" stroke-dasharray="1.5 3" stroke-width="1.5" x1="1" x2="37" y1="4.5" y2="4.5"></line>
+                  </svg>
+                  <span class="grade g-RUNTIME_ONLY" title="decided at run time; no mode follows it">
+                    RUNTIME_ONLY
+                  </span>
+                  <span class="comment">decided at run time; no mode follows it</span>
+                </span>
+              </li>
+              <li>
+                <span style="display: flex; align-items: center; gap: 7px">
+                  <svg aria-hidden="true" height="9" width="38">
+                    <line stroke="#8A96B5" stroke-dasharray="1.5 3" stroke-width="1.5" x1="1" x2="37" y1="4.5" y2="4.5"></line>
+                  </svg>
+                  <span class="grade g-UNRESOLVED" title="the analysis could not tell; no mode follows it">
+                    UNRESOLVED
+                  </span>
+                  <span class="comment">the analysis could not tell; no mode follows it</span>
+                </span>
               </li>
             </ul>
             <div class="comment" style="margin-top: 8px">A line shows the grade of that one link. The badge on a row is the weakest link on its way from the start, so a row can be weaker than the line into it. A line into a table carries the table's badge: the answer does not grade that last step alone.</div>
@@ -869,16 +889,18 @@ read">
               </span>
             </div>
             <div class="railchips">
+              <span class="raillbl">verification: not certified</span>
               <span class="railchip" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden  statements-axis-not-shipped  column-axis-degraded  jpa-axis-degraded  mybatisPlus-axis-not-shipped  screen-axis-degraded">UNCERTIFIED</span>
-              <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
+              <span class="railchip" title="freshness unknown  basis.freshness.verdict">not checked against a commit</span>
               <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
                 <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
                   <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
                 </svg>
                 <span class="foldtext">
-                  6 limits
+                  6 limits on this answer
                 </span>
               </button>
+              <span class="count railwhole">(the project has 11)</span>
             </div>
             <div class="foldbody"></div>
             <div class="railfolds">
@@ -888,7 +910,7 @@ read">
                     <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
                   </svg>
                   <span class="foldtext">
-                    basis
+                    what it was built from
                   </span>
                 </button>
                 <div class="foldbody"></div>
@@ -899,7 +921,7 @@ read">
                     <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
                   </svg>
                   <span class="foldtext">
-                    trust
+                    what the trust level rests on
                   </span>
                 </button>
                 <div class="foldbody"></div>

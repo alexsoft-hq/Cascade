@@ -30,51 +30,12 @@
       <span class="msep" aria-hidden="true">
         ·
       </span>
-      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the counts along the chain, the fingerprint of this build and the commit it was made from" type="button">counts and build</button>
       <span id="mbuild" class="mbuild hidden">…</span>
     </div>
-    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
-      <button class="crlane hollow crlink" onclick title="this project was analysed without the part that counts these, so the number is missing rather than zero. Click to see why and what to set." type="button">
-        screens
-        <b>not collected</b>
-      </button>
-      <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is how the routes are named, not a module anyone declared. Structure and Trace group routes this way too, and the map on Start says what its own boxes are.">
-        api groups by path
-        <b>2</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        endpoints
-        <b>3</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.">
-        services
-        <b>4</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        SQL
-        <b>3</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        tables
-        <b>3</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        columns
-        <b>4</b>
-      </span>
-    </div>
+    <div id="crail" class="crail hidden" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">…</div>
     <div id="mchips" class="mchips">
-      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
-        <span class="mdot" aria-hidden="true"></span>
-        <span id="mfreshsr" class="sronly">freshness unknown</span>
-        <span id="mfresh"></span>
-      </span>
+      <span id="mfreshchip" class="mchip quiet hidden" title="there is no git commit to compare with, so nothing says whether this build is behind your working tree. It is not an error.  freshness unknown  basis.freshness.verdict">…</span>
       <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
       <span id="mtracechip" class="mchip quiet hidden">…</span>
       <span id="mlimitcell">
@@ -83,7 +44,7 @@
             <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
           </svg>
           <span class="foldtext">
-            4 limits
+            4 project limits
           </span>
         </button>
       </span>
@@ -101,18 +62,20 @@
     </div>
     <div id="proj" class="mnote"></div>
     <div id="snapbar" class="snapbar hidden" role="note"></div>
-    <div class="tabs" role="tablist">
-      <button class="tab" aria-selected="false" data-place="start" data-t="tab.start" onclick type="button">Start</button>
-      <button class="tab" aria-selected="false" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
-      <button class="tab active" aria-selected="true" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
-      <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
-      <button class="tab" aria-selected="false" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
-    </div>
-    <div id="subtabs" class="subtabs" role="tablist">
-      <button class="subtab" onclick type="button">Graph</button>
-      <button class="subtab active" onclick type="button">Table links, by SQL joins</button>
-      <button class="subtab" onclick type="button">Coupling</button>
-      <button class="subtab" onclick type="button">Transactions</button>
+    <div class="tabrow">
+      <div class="tabs" role="tablist">
+        <button class="tab" aria-selected="false" data-place="start" data-t="tab.start" onclick type="button">Start</button>
+        <button class="tab" aria-selected="false" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
+        <button class="tab active" aria-selected="true" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
+        <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
+        <button class="tab" aria-selected="false" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
+      </div>
+      <div id="subtabs" class="subtabs" role="tablist">
+        <button class="subtab" onclick type="button">Graph</button>
+        <button class="subtab active" onclick type="button">Table links, by SQL joins</button>
+        <button class="subtab" onclick type="button">Coupling</button>
+        <button class="subtab" onclick type="button">Transactions</button>
+      </div>
     </div>
   </header>
   <div class="wrap">
@@ -255,16 +218,18 @@
             </span>
           </div>
           <div class="railchips">
+            <span class="raillbl">verification: not certified</span>
             <span class="railchip" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden">UNCERTIFIED</span>
-            <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
+            <span class="railchip" title="freshness unknown  basis.freshness.verdict">not checked against a commit</span>
             <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
               <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
                 <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
               </svg>
               <span class="foldtext">
-                1 limits
+                1 limits on this answer
               </span>
             </button>
+            <span class="count railwhole">(the project has 4)</span>
           </div>
           <div class="foldbody"></div>
           <div class="railfolds">
@@ -274,7 +239,7 @@
                   <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
                 </svg>
                 <span class="foldtext">
-                  basis
+                  what it was built from
                 </span>
               </button>
               <div class="foldbody"></div>
@@ -285,7 +250,7 @@
                   <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
                 </svg>
                 <span class="foldtext">
-                  trust
+                  what the trust level rests on
                 </span>
               </button>
               <div class="foldbody"></div>

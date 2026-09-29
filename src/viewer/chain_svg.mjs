@@ -34,7 +34,7 @@ export const SVG_LANES = Object.freeze({
 });
 
 import { GRADE_DASH, dashAttr, escapeXml as esc, gradeBadgeSvg, svgDocument } from './svg_doc.mjs';
-import { CHAIN_FIT, chainLabels, emptyLanesLast, fitLines, laneWidth, orderLanes } from './chainlayout.mjs';
+import { CHAIN_FIT, chainLabels, emptyLanesLast, fitLines, laneWidth, orderLanes, ormCallsOf } from './chainlayout.mjs';
 
 /** The live page's dash per grade, spelled once in chainlayout.mjs and read from here by the tests. */
 export { GRADE_DASH };
@@ -153,7 +153,7 @@ function lanesOf(response, direction) {
  */
 export function chainModel(response, direction) {
   const lanes = lanesOf(response, direction);
-  const names = chainLabels(lanes.flatMap((l) => l.rows.map((r) => r.id)));
+  const names = chainLabels(lanes.flatMap((l) => l.rows.map((r) => r.id)), CHAIN_FIT, ormCallsOf(response.answer));
   for (const l of lanes) for (const r of l.rows) r.label = names.get(r.id).text;
   const at = new Map();
   lanes.forEach((lane, li) => lane.rows.forEach((r, ri) => { if (!at.has(r.key)) at.set(r.key, [li, ri]); }));

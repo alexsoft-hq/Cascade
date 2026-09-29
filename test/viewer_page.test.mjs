@@ -236,7 +236,11 @@ test('the language toggle re-renders the chrome and asks the server for nothing'
   assert.equal(ev(ctx, 'JSON.stringify([...I18N.t.fellBack])'), '[]');
 
   // The ANSWER on screen is untouched: the engine's own numbers and words.
-  assert.match(byId.get('ovside').textContent, /freshness/, "the engine's honesty block is not translated");
+  // RM67-U2e: the rail's own words are the page's and are translated; the
+  // engine's values in it (the trust level) are printed as they came.
+  assert.match(byId.get('ovside').textContent, /이 답의 근거/, "the rail's heading is the page's word");
+  assert.equal(/\b(basis|truncated|freshness)\b/.test(byId.get('ovside').textContent), false, 'no page word left in English');
+  assert.match(byId.get('ovside').textContent, new RegExp(ev(ctx, 'OV.resp.trust.trustLevel')), "the engine's level is untouched");
 
   // Back to English, from the same catalogue, with no fetch either.
   seg.children[0].onclick();
@@ -444,7 +448,10 @@ test('a language switch moves the lane HEADINGS and hop captions — and still a
   await settle(ctx, 6);
 
   assert.deepEqual(calls, [], `the switch asked the server for: ${calls.map((c) => c.url).join(', ')}`);
-  for (const h of heads()) assert.match(h, /[가-힣]/, `a lane heading is still English: ${h}`);
+  // "API" is the Korean page's own word for a route (RM67-U2e: the answer says
+  // "API 31개"), so the one heading that is the same letters in both is Korean too.
+  assert.deepEqual(heads(), ['대상', 'SQL 문(매퍼)', '서비스 계층', 'API']);
+  for (const h of heads().filter((x) => x !== 'API')) assert.match(h, /[가-힣]/, `a lane heading is still English: ${h}`);
   for (const h of hops()) assert.match(h, /[가-힣]/, `a hop caption is still English: ${h}`);
   assert.equal(ev(ctx, 'JSON.stringify([...I18N.t.missing])'), '[]');
   assert.equal(ev(ctx, 'JSON.stringify([...I18N.t.fellBack])'), '[]');
@@ -607,7 +614,8 @@ test('the evidence rail: the limits chip counts them, and ONE activation puts ev
     withLimits += got.limits > 0 ? 1 : 0;
     // (1) the chip COUNTS them — the glance level never rounds a limit away,
     //     and an answer with no limit gets no chip rather than a chip saying 0.
-    assert.deepEqual(got.chips, got.limits ? [`${got.limits} limits`] : [], `${tool}: the limits chip`);
+    // (RM67-U2e: the chip says whose limits they are, this answer's, so it never reads as the masthead's count.)
+    assert.deepEqual(got.chips, got.limits ? [`${got.limits} limits on this answer`] : [], `${tool}: the limits chip`);
     // (2) ...and the trust level is outside every fold, chip or no chip.
     assert.ok(got.before.includes(got.trust), `${tool}: the trust level must be visible at rest`);
     // (3) one activation, and every reason the engine wrote is in the document,
@@ -718,12 +726,13 @@ test('the "This pack" card is gone, and every field it printed is still on the O
 
   // built: the evidence rail's `basis` block, one activation away.
   const rail = byId.get('ovside');
-  const basis = rail.querySelectorAll('button.foldlead').find((b) => b.textContent.trim() === 'basis');
+  const basis = rail.querySelectorAll('button.foldlead').find((b) => b.textContent.trim() === 'what it was built from');
   assert.ok(basis, 'the rail carries a basis block');
   basis.onclick();
   assert.match(rail.textContent, /built/);
   assert.match(rail.textContent, /2026-09-04 00:00:00/, 'the pack’s own build time');
   assert.match(rail.textContent, /freshness/);
+  assert.ok(rail.querySelectorAll('.railrow').some((r) => r.title === 'basis.builtAt'), 'a row names the contract field it relays');
 
   // walked (mode + depth): the ribbon's own note, now one fold below the hero.
   const ribbon = byId.get('ovfold').querySelector('button.foldlead');
@@ -1195,7 +1204,7 @@ test('the masthead limits chip is the SAME fold as the evidence rail\'s', async 
   const limits = JSON.parse(ev(ctx, 'JSON.stringify((OV.resp.limits||[]).map((l)=>l.reason))'));
   assert.ok(limits.length > 0, 'this fixture is expected to carry limits');
   assert.ok(chip, 'the masthead counts them');
-  assert.match(chip.textContent, new RegExp(`${limits.length} limits`));
+  assert.match(chip.textContent, new RegExp(`${limits.length} project limits`), 'the masthead says whose limits it counts');
   assert.equal(byId.get('mfolds').textContent.includes(limits[0]), false, 'closed, it says nothing');
 
   chip.onclick();
@@ -2450,7 +2459,7 @@ test('the rail is a browse ANSWER, never a count the page did: every number on i
   assert.deepEqual([first.table, first.statementsRead, first.statementsWrite, first.endpoints],
     ['gamma_order', 1, 1, 2]);
   const chips = rowsOf(byId, 'tlist')[0].querySelectorAll('.brstat').map((c) => c.textContent);
-  assert.deepEqual(chips, ['sql2', 'api2'], 'statements touching, then endpoints reaching, each with its own label');
+  assert.deepEqual(chips, ['SQL2', 'API2'], 'statements touching, then endpoints reaching, each with its own label');
   // ...and each one says what it counts.
   const titles = rowsOf(byId, 'tlist')[0].querySelectorAll('.brstat').map((c) => c.title);
   assert.match(titles[0], /how many SQL statements touch this/);
@@ -2615,27 +2624,30 @@ test('the pane remembers how wide the reader made it, inside its own floor and c
   assert.equal(remembered.byId.get('srcpane').style.width, '620px');
 });
 
-test("the rail's stat chips are LABELLED, one label set per kind, and a label is not translated", async (t) => {
+test("the rail's stat chips are LABELLED with words, one set per kind, in the reader's language", async (t) => {
   const { ctx, byId } = await bootPage(t, { ids: ['gamma'], hash: '#p=gamma&tab=trace' });
   const chips = () => rowsOf(byId, 'tlist')[0].querySelectorAll('.brstat')
     .map((c) => [c.querySelector('.brlbl').textContent, c.textContent]);
   const kind = async (k) => { ev(ctx, `railSetKind('trace','${k}')`); await settle(ctx, 10); };
 
   // tables: how much SQL touches it, how many endpoints reach it.
-  assert.deepEqual(chips(), [['sql', 'sql2'], ['api', 'api2']]);
+  assert.deepEqual(chips(), [['SQL', 'SQL2'], ['API', 'API2']]);
+  // RM67-U2e: `r7 w8 api22 scr12` was a legend the reader did not have. The
+  // labels are words now, on a line of their own under the name.
   await kind('column');
-  assert.deepEqual(chips().map((x) => x[0]), ['r', 'w', 'api']);
+  assert.deepEqual(chips().map((x) => x[0]), ['reads', 'writes', 'API']);
+  assert.ok(rowsOf(byId, 'tlist')[0].querySelector('.brmeta .brstats'), 'the numbers are under the name, not beside it');
   await kind('statement');
-  assert.deepEqual(chips().map((x) => x[0]), ['tbl', 'api']);
+  assert.deepEqual(chips().map((x) => x[0]), ['tables', 'API']);
   await kind('endpoint');
-  assert.deepEqual(chips().map((x) => x[0]), ['sql', 'tbl']);
+  assert.deepEqual(chips().map((x) => x[0]), ['SQL', 'tables']);
 
-  // The labels are the ENGINE's own nouns, so a language switch does not move
-  // them; the SENTENCE that says what each counts is the page's, and does.
-  const before = chips();
+  // The words are the page's, so a language switch moves them, and the
+  // sentence that says what each counts moves with them.
+  await kind('column');
   byId.get('langseg').children[1].onclick();
   await settle(ctx, 8);
-  assert.deepEqual(chips(), before, 'a label is a noun the engine owns');
+  assert.deepEqual(chips().map((x) => x[0]), ['읽기', '쓰기', 'API']);
   assert.match(rowsOf(byId, 'tlist')[0].querySelectorAll('.brstat')[0].title, /[가-힣]/,
     '...and the title that says what it counts is translated');
 });
@@ -2662,11 +2674,11 @@ test('the rail connects its endpoint count to the masthead\'s, because they are 
   // the one in between is a route this pack calls and does not serve.
   ev(ctx, "OV.resp.answer.nodes.find((n)=>n.kind==='endpoint').count = 4; railSetKind('trace','endpoint');");
   await settle(ctx, 12);
-  const want = '3 served; 1 more are routes this pack calls and does not serve';
+  const want = '3 served here; 1 more are addresses this project only calls';
   assert.equal(ev(ctx, "railOutboundNote('trace')"), want);
   assert.equal(kindChip(byId, 'Endpoints').title, want, 'the Endpoints chip says it');
   assert.match(byId.get('tcount').textContent, /3 shown of 3/);
-  assert.match(byId.get('tcount').textContent, /1 more are routes/, 'and so does the count line');
+  assert.match(byId.get('tcount').textContent, /1 more are addresses this project only calls/, 'and so does the count line');
 });
 
 test('Show all is disabled while a tab IS its opening state', async (t) => {
@@ -3272,7 +3284,7 @@ test('Trace lists screens from ONE browse request, and Details on a screen draws
   const rows = rowsOf(byId, 'tlist');
   assert.deepEqual(rows.map((r) => r.title), ['/rows', '/quiet']);
   // The row: the label, the title under it, `api` / `tbl` and the `seen` mark.
-  assert.deepEqual(rows[0].querySelectorAll('.brstat').map((x) => x.textContent), ['api2', 'tbl1']);
+  assert.deepEqual(rows[0].querySelectorAll('.brstat').map((x) => x.textContent), ['API2', 'tables1']);
   assert.deepEqual(rows[0].querySelectorAll('.brflag').map((x) => x.textContent), ['seen']);
   assert.equal(rows[0].querySelector('.brsub').textContent, 'Rows');
   assert.deepEqual(rows[1].querySelectorAll('.brflag').map((x) => x.textContent), [],
@@ -4295,7 +4307,7 @@ test('the card for a node from another project offers open-in-project and nothin
   const buttons = side.querySelectorAll('button').map((b) => b.textContent);
   // The clear button belongs to the card head; the only ACTION is the handoff.
   // `basis` and `trust` are the honesty block under every card, on every tab.
-  assert.deepEqual(buttons.filter((b) => !/^(clear|basis|trust)$/i.test(b)), ['Open in served'], buttons.join(' | '));
+  assert.deepEqual(buttons.filter((b) => !/^(clear|what it was built from|what the trust level rests on)$/i.test(b)), ['Open in served'], buttons.join(' | '));
   assert.equal(side.querySelectorAll('.fproj')[0].textContent, 'served');
   assert.match(side.textContent, /this node is in served/);
   // The id on the card is the one that table has IN ITS OWN PROJECT.

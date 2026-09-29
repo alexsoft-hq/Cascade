@@ -61,12 +61,12 @@ test('a table offers where it is used and details, and says in words why it has 
   ev(ctx, "openTrace({kind:'table', id:'gamma_order'}, 'down')");
   await settle(ctx, 12);
   assert.equal(q(ctx).dir, 'up', 'a direction the target does not have falls back to its own');
-  assert.deepEqual(dirButtons(byId), ['Where it is used', 'Details'], 'no disabled "What it uses" button: it is absent');
+  assert.deepEqual(dirButtons(byId), ['↑ Where it is used', 'Details'], 'no disabled "What it uses" button: it is absent');
   assert.match(byId.get('tracehead').textContent, /A table is where a chain ends, so it uses nothing/);
   // A screen has no "where it is used", and says why.
   ev(ctx, "openTrace({kind:'screen', id:'/rows'}, 'up')");
   await settle(ctx, 4);
-  assert.deepEqual(dirButtons(byId), ['What it uses', 'Details']);
+  assert.deepEqual(dirButtons(byId), ['↓ What it uses', 'Details']);
   assert.match(byId.get('tracehead').textContent, /A screen is the top of the chain, so nothing uses it/);
 });
 
@@ -74,8 +74,8 @@ test('a route offers all three, and "where it is used" is the tool\'s own walk u
   const { ctx, byId, asked } = await boot(t, { hash: '#p=delta&tab=trace' });
   ev(ctx, "openTrace({kind:'endpoint', id:'GET /rows'}, 'down')");
   await settle(ctx, 12);
-  assert.deepEqual(dirButtons(byId), ['What it uses', 'Where it is used', 'Details']);
-  press(byId, 'Where it is used');
+  assert.deepEqual(dirButtons(byId), ['↓ What it uses', '↑ Where it is used', 'Details']);
+  press(byId, '↑ Where it is used');
   await settle(ctx, 12);
   const last = flows(asked).at(-1);
   assert.deepEqual([last.args.direction, last.args.endpoint], ['up', 'GET /rows']);
@@ -107,7 +107,7 @@ test('a click shows a row; "Trace from here" moves the start; switching directio
   await settle(ctx, 12);
   assert.deepEqual(q(ctx).target, { kind: 'symbol', id: 'com.g.GServiceImpl#save' });
   assert.equal(q(ctx).dir, 'down', 'the new start is read the same way');
-  press(byId, 'Where it is used');
+  press(byId, '↑ Where it is used');
   await settle(ctx, 12);
   assert.deepEqual(q(ctx).target, { kind: 'symbol', id: 'com.g.GServiceImpl#save' }, 'a direction switch keeps the start');
   assert.equal(q(ctx).dir, 'up');
@@ -127,7 +127,7 @@ test('a depth the reader chose survives a direction switch and a new target; the
   byId.get('tdepth').onchange();
   await settle(ctx, 12);
   assert.equal(flows(asked).at(-1).args.depth, 3);
-  press(byId, 'Where it is used');
+  press(byId, '↑ Where it is used');
   await settle(ctx, 12);
   assert.equal(flows(asked).at(-1).args.depth, 3, 'a chosen depth survives the switch');
   ev(ctx, "openTrace({kind:'table', id:'gamma_item'}, 'up')");
@@ -284,7 +284,7 @@ test('under a column\'s card, the screens a change there is felt on, followed al
   const side = byId.get('view').textContent;
   assert.match(side, /Screens a change here is felt on, mode conservative, with no depth cap/);
   assert.match(side, /\/rows/);
-  const into = byId.get('view').querySelectorAll('button').find((b) => b.textContent === 'What it uses');
+  const into = byId.get('view').querySelectorAll('button').find((b) => b.textContent === '↓ What it uses');
   into.onclick();
   await settle(ctx, 12);
   assert.deepEqual([q(ctx).target, q(ctx).dir], [{ kind: 'screen', id: '/rows' }, 'down'], 'each screen is a way into Trace, walked down');

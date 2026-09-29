@@ -499,6 +499,18 @@ function symbolRow(w, h, id, n, rec) {
   return { lane: 'services', row, grade };
 }
 
+/**
+ * WHAT AN ORM CALL SITE DOES, from its own node: the model or entity and the
+ * operation (`Access.deleteMany`). A method's call sites are otherwise told
+ * apart only by their ordinal (`UserService.deleteUser #0 .. #4`), which says
+ * nothing a reader can use. Null for a statement no ORM bridge made.
+ */
+export function ormCall(n) {
+  const ev = n.prismaEvidence ?? n.typeormEvidence ?? null;
+  if (!ev || !ev.operation) return null;
+  return { model: ev.model ?? ev.entity ?? null, operation: ev.operation };
+}
+
 /** A STATEMENT ROW, with the mapper it belongs to read from whichever side the walk came. */
 function statementRow(graph, w, h, id, n, rec) {
   const { up } = w;
@@ -517,6 +529,7 @@ function statementRow(graph, w, h, id, n, rec) {
       short: nodeLabel(n, id),
       symbol: mapper,
       statementType: n.statementType ?? null,
+      ...(ormCall(n) ? { call: ormCall(n) } : {}),
       // A MyBatis-Plus built-in whose condition wrapper is built at run time
       // touches a KNOWN table with an UNKNOWN column list. The flow row says
       // so, because a reader looking at "reaches sys_user" is entitled to know

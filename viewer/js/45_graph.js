@@ -2684,7 +2684,7 @@ function mapLeadCard(){
     el('div',{className:'ovchips'}, top('group',8).map(chip)),
     el('div',{className:'cpnote'},[
       s.tablesTouched<s.tables
-        ? t('map.lead.unreached',{n:s.tables-s.tablesTouched, total:s.tables})
+        ? t('map.lead.unreached',{n:s.tables-s.tablesTouched, total:s.tables, mode:GMAP.resp.answer.mode})
         : t('map.lead.allreached')]),
   ]);
 }

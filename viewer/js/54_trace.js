@@ -198,20 +198,28 @@ function renderTraceDir(){
     textContent:t(TRACE_DIR_KEY[dir]), onclick:()=> traceSetDir(dir) })));
   for(const b of box.children) b.setAttribute('aria-pressed', String(b.classList.contains('on')));
 }
-/** What is being asked, in one line, and why a direction is absent. */
+/**
+ * What is being asked, and ANSWERED, over the picture (RM67-U2e): the question
+ * on one line, then the answer in one sentence and the ends it reaches
+ * (58_answer.js), then why a direction is absent. Until the answer is in, the
+ * line says the mode and depth it is being asked in.
+ */
 function renderTraceHead(){
   const head = byId('tracehead');
   const tg = TRACE.target;
   if(!tg || TRACE.edits){ head.classList.add('hidden'); head.replaceChildren(); return; }
   head.classList.remove('hidden');
-  const walk = TRACE.dir !== 'detail';
-  const nodir = Object.entries(TRACE_NODIR[tg.kind] || {}).map(([, key])=> el('span', { className:'tnodir', textContent:t(key) }));
-  setKids(head,
+  const answer = TRACE.dir !== 'detail' ? traceAnswerLine(TRACEV) : null;
+  const nodir = Object.entries(TRACE_NODIR[tg.kind] || {}).map(([, key])=> el('div', { className:'tnodir', textContent:t(key) }));
+  setKids(head, traceQuestionLine(tg, !answer && TRACE.dir !== 'detail'), answer, answer ? traceEndsBlock(TRACEV) : null, ...nodir);
+}
+/** The question: the target, the way it is read, and until the answer says them, the mode and depth asked. */
+function traceQuestionLine(tg, asking){
+  return el('div', { className:'tquestionrow' }, [
     el('span', { className:'tquestion' }, [ kindGlyph(TRACE_GLYPH[tg.kind], 12), ' ', t(TRACE_DIR_KEY[TRACE.dir]) + ': ',
       el('code', { className:'id', textContent:tg.id }) ]),
-    walk ? el('span', { textContent:t('trace.q.mode', { mode:byId('tmode').value }) }) : null,
-    walk ? el('span', { title:t('trace.depth.title'), textContent:t('trace.q.depth', { n:depthText(byId('tdepth').value) }) }) : null,
-    ...nodir);
+    asking ? el('span', { textContent:t('trace.q.mode', { mode:byId('tmode').value }) }) : null,
+    asking ? el('span', { title:t('trace.depth.title'), textContent:t('trace.q.depth', { n:depthText(byId('tdepth').value) }) }) : null ]);
 }
 /** Which half of the pane is on: the chain picture, or the details lists. */
 function tracePane(which){
@@ -267,30 +275,40 @@ function traceRestore(h){
  * cap (with the depth that would follow them), the node cap, the generated
  * interior, rows named past the cap, and every lane shown in part. The mode
  * floor has its own panel (chainLeftOut). Each count is the answer's own; the
- * sentences are the page's, and the engine's own note stays in the rail.
+ * sentences are the page's, and the engine's own note stays in the rail. The
+ * count is IN the sentence, bold (RM67-U2e), so no language starts one with a
+ * bare counter word the way a number column made the Korean line read.
  */
 function traceLimitsPanel(v, r){
   const a = r.answer, w = a.walk || {}, cut = w.cut || {};
   const rows = [];
-  const line = (n, text, btn)=> rows.push(el('div', { className:'tlim' }, [
-    n != null ? el('span', { className:'ovnum', textContent:ovNum(n) }) : null, el('span', { textContent:text }), btn || null ]));
-  if(cut.depth > 0) line(cut.depth, t('trace.lim.depth', { depth:depthText(w.depth) }), traceDeeperButton(w));
-  // Up at the deepest a walk goes, the screens a change is felt on are still
-  // one question away: Details follows the same reach all the way up.
-  if(cut.depth > 0 && Number(w.depth) >= 8 && w.direction === 'up' && TRACE.target && TRACE_SCREENS_OF.includes(TRACE.target.kind)) {
-    line(null, t('trace.lim.todetail'), el('button', { className:'mini', textContent:t('trace.dir.detail'), title:t('trace.dir.detail.title'),
-      onclick:()=> traceSetDir('detail') }));
-  }
-  if(cut.nodeCap) line(null, t('trace.lim.nodecap'));
-  if(cut.generated > 0) line(cut.generated, t('trace.lim.generated'));
+  const line = (text, btn)=> rows.push(el('div', { className:'tlim' }, [ el('span', {}, richNodes(text)), btn || null ]));
+  traceLimitsDepth(w, line);
+  if(cut.nodeCap) line(t('trace.lim.nodecap'));
+  if(cut.generated > 0) line(t('trace.lim.generated', { n:ovNum(cut.generated) }));
   const beyond = (w.beyond || {})[w.endLane];
-  if(beyond > 0) line(beyond, t('trace.lim.beyond', { lane:laneTitle(w.endLane) }));
+  if(beyond > 0) line(t('trace.lim.beyond', { n:ovNum(beyond), lane:laneTitle(w.endLane) }));
   for(const f of (r.truncated && r.truncated.fields) || []){
-    if(f.shown < f.total) line(f.total - f.shown, t('trace.lim.page', { lane:laneTitle(f.field), shown:f.shown, total:f.total }));
+    if(f.shown < f.total) line(t('trace.lim.page', { n:ovNum(f.total - f.shown), lane:laneTitle(f.field), shown:f.shown, total:f.total }));
   }
-  if(a.empty && a.empty.screens === 'not-shipped') line(null, t('trace.lim.noscreens'));
+  if(a.empty && a.empty.screens === 'not-shipped') line(t('trace.lim.noscreens'));
   return el('div', { className:'panel tlimits' }, [ el('h2', { textContent:t('trace.lim.title') }),
     rows.length ? el('div', {}, rows) : el('div', { className:'comment', textContent:t('trace.lim.none') }) ]);
+}
+/**
+ * A walk the reader narrowed stopped at that depth. Every walk's own rule is no
+ * cap, so the way on is to lift it; walked up, Details also lists every screen
+ * a change is felt on, with no cap. (It used to say this was the deepest a walk
+ * goes, beside the button that goes deeper.)
+ */
+function traceLimitsDepth(w, line){
+  const cut = w.cut || {};
+  if(!(cut.depth > 0)) return;
+  line(t('trace.lim.depth', { n:ovNum(cut.depth), depth:depthText(w.depth) }), traceDeeperButton(w));
+  if(w.depth != null && w.direction === 'up' && TRACE.target && TRACE_SCREENS_OF.includes(TRACE.target.kind)) {
+    line(t('trace.lim.todetail', { depth:w.depth }), el('button', { className:'mini', textContent:t('trace.dir.detail'), title:t('trace.dir.detail.title'),
+      onclick:()=> traceSetDir('detail') }));
+  }
 }
 /** The button that lifts the depth a cut walk was narrowed to: every walk's own rule is no cap. */
 function traceDeeperButton(w){

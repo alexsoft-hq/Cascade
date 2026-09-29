@@ -111,7 +111,7 @@ test('a map grouped by where the code sits says code areas everywhere, in both l
   assert.match(map(), /코드 영역 order/);
   assert.equal(/묶음/.test(map()), false, 'the old word, which read as the header\'s group, is gone');
   // The folded box says what it folds.
-  assert.equal(ev(ctx, "t('summary.others.groups', {n:3, routes:18, nouns:t('summary.nouns.area'), noun:t('summary.noun.area')})"), '경로가 적은 코드 영역 3개, 경로 18개');
+  assert.equal(ev(ctx, "t('summary.others.groups', {n:3, routes:18, nouns:t('summary.nouns.area'), noun:t('summary.noun.area')})"), 'API가 적은 코드 영역 3개, API 18개');
 });
 
 // ---------------------------------------------------------------------------
@@ -141,6 +141,8 @@ test('every gap row on Start says the one thing to do, from the engine, or that 
   const { ctx, byId } = await boot(t, { rewrite: { overview: ghostLike } });
   const sgaps = byId.get('sgaps');
   // The guessed routes come first, and carry the fix the diagnostic names.
+  // (Where they stop EVERY walk, Start's first line says it instead: RM67-U2e,
+  // test/viewer_review4.test.mjs. Here some routes still reach SQL.)
   const guess = sgaps.querySelector('.sgapguess').parentNode;
   assert.match(guess.textContent, /117 of 118 routes graded HEURISTIC: mode conservative stops at them/);
   assert.equal(fixOf(guess).textContent, 'What to do: Declare tsBackend.globalPrefixExclude in the profile, for example ["health", "docs{/*rest}"].');
@@ -148,9 +150,9 @@ test('every gap row on Start says the one thing to do, from the engine, or that 
     'the key and the example are code a reader copies');
   const rows = sgaps.querySelectorAll('li');
   const row = (start) => rows.find((li) => li.querySelector('button.sgap').textContent.startsWith(start));
-  assert.equal(fixOf(row('a lane reported TS_PREFIX_EXCLUDE_UNREAD')).textContent,
+  assert.equal(fixOf(row('unread setting: API prefix exclude list')).textContent,
     'What to do: Declare tsBackend.globalPrefixExclude in the profile, for example ["health", "docs{/*rest}"].');
-  assert.equal(fixOf(row('a lane reported TS_MODULE_IMPORT_UNREAD')).textContent,
+  assert.equal(fixOf(row('a module import not read')).textContent,
     'What to do: No fix the engine knows of. It can only say what it could not read.');
   assert.equal(fixOf(row('calls we could not follow')).textContent, 'What to do: Analyze again with --java-src <module>/src/main/java.');
   assert.equal(fixOf(row('database schema: not collected')).textContent, 'What to do: Run cascade catalog fetch --candidate 1.');

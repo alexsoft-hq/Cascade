@@ -27,51 +27,12 @@
       <span class="msep" aria-hidden="true">
         ·
       </span>
-      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the counts along the chain, the fingerprint of this build and the commit it was made from" type="button">counts and build</button>
       <span id="mbuild" class="mbuild hidden">…</span>
     </div>
-    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
-      <span class="crlane">
-        screens
-        <b>1</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is how the routes are named, not a module anyone declared. Structure and Trace group routes this way too, and the map on Start says what its own boxes are.">
-        api groups by path
-        <b>4</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        endpoints
-        <b>11</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.">
-        services
-        <b>4</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="we analyzed no mapper XML, so this pack carries no SQL statement. Statement and join answers here are absent, not empty">
-        SQL
-        <b>5 ~</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        tables
-        <b>2</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="where no mapper SQL names a column, we derived it from a JPA attribute name under an ASSUMED naming strategy, because the profile declares no jpa.namingStrategy. Those columns are graded HEURISTIC; declare the strategy and they become EXACT">
-        columns
-        <b>6 ~</b>
-      </span>
-    </div>
+    <div id="crail" class="crail hidden" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">…</div>
     <div id="mchips" class="mchips">
-      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
-        <span class="mdot" aria-hidden="true"></span>
-        <span id="mfreshsr" class="sronly">freshness unknown</span>
-        <span id="mfresh"></span>
-      </span>
+      <span id="mfreshchip" class="mchip quiet hidden" title="there is no git commit to compare with, so nothing says whether this build is behind your working tree. It is not an error.  freshness unknown  basis.freshness.verdict">…</span>
       <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
       <span id="mtracechip" class="mchip quiet hidden">…</span>
       <span id="mlimitcell">
@@ -80,7 +41,7 @@
             <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
           </svg>
           <span class="foldtext">
-            8 limits
+            8 project limits
           </span>
         </button>
       </span>
@@ -98,14 +59,16 @@
     </div>
     <div id="proj" class="mnote"></div>
     <div id="snapbar" class="snapbar hidden" role="note"></div>
-    <div class="tabs" role="tablist">
-      <button class="tab active" aria-selected="true" data-place="start" data-t="tab.start" onclick type="button">Start</button>
-      <button class="tab" aria-selected="false" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
-      <button class="tab" aria-selected="false" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
-      <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
-      <button class="tab" aria-selected="false" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
+    <div class="tabrow">
+      <div class="tabs" role="tablist">
+        <button class="tab active" aria-selected="true" data-place="start" data-t="tab.start" onclick type="button">Start</button>
+        <button class="tab" aria-selected="false" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
+        <button class="tab" aria-selected="false" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
+        <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
+        <button class="tab" aria-selected="false" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
+      </div>
+      <div id="subtabs" class="subtabs hidden" role="tablist"></div>
     </div>
-    <div id="subtabs" class="subtabs hidden" role="tablist"></div>
   </header>
   <div class="wrap">
     <div id="tab-start">
@@ -122,6 +85,7 @@
           <div class="foldbody"></div>
         </div>
       </div>
+      <div id="slead" class="startlead hidden" role="note"></div>
       <div class="panel startask">
         <h2 data-t="start.ask.title">Ask about one thing</h2>
         <div class="startsearch">
@@ -197,8 +161,8 @@
           <div class="panelsub">What the analysis did not have or could not read. An answer that runs through one of these is shorter or less sure than it looks.</div>
           <ul class="sgaps">
             <li>
-              <button class="sgap warn" onclick type="button">
-                <span>API calls to other services</span>
+              <button class="sgap warn" onclick title="http-calls-leaving-pack" type="button">
+                <span>API calls no route here answers</span>
                 <span class="ovnum">1</span>
               </button>
               <div class="remedy">
@@ -209,7 +173,7 @@
               </div>
             </li>
             <li>
-              <button class="sgap warn" onclick type="button">
+              <button class="sgap warn" onclick title="statements" type="button">
                 <span>SQL: not collected</span>
               </button>
               <div class="remedy">
@@ -220,7 +184,7 @@
               </div>
             </li>
             <li>
-              <button class="sgap warn" onclick type="button">
+              <button class="sgap warn" onclick title="unresolved-calls" type="button">
                 <span>calls we could not follow</span>
                 <span class="ovnum">0</span>
               </button>
@@ -230,7 +194,7 @@
               </div>
             </li>
             <li>
-              <button class="sgap warn" onclick type="button">
+              <button class="sgap warn" onclick title="column" type="button">
                 <span>columns: only partly read</span>
               </button>
               <div class="remedy">
@@ -243,7 +207,7 @@
               </div>
             </li>
             <li>
-              <button class="sgap warn" onclick type="button">
+              <button class="sgap warn" onclick title="jpa" type="button">
                 <span>JPA mappings: only partly read</span>
               </button>
               <div class="remedy">
@@ -258,6 +222,13 @@
           </ul>
           <button class="mini" onclick style="margin-top: 8px" type="button">All 7 on Analysis status</button>
         </div>
+      </div>
+      <div id="ovsummary" class="panel summap">
+        <h2>The map: which code reaches which tables</h2>
+        <div class="panel">error: unknown-key: nothing recorded for summary</div>
+      </div>
+      <div id="skpimode" class="skpimode">
+        <span>The shares and the busiest lists below are counted in conservative, depth not capped.</span>
       </div>
       <div id="ovcards" class="ovkpis">
         <div class="kpi" aria-label="endpoints that reach SQL: 100%, 10 / 10" style="color: #22D3EE">
@@ -336,10 +307,6 @@
           </div>
         </div>
       </div>
-      <div id="ovsummary" class="panel summap">
-        <h2>The map: which code reaches which tables</h2>
-        <div class="panel">error: unknown-key: nothing recorded for summary</div>
-      </div>
       <div id="shubs" class="ovpanels3">
         <div class="panel">
           <h2>
@@ -347,15 +314,21 @@
             <span class="count">(2)</span>
           </h2>
           <div class="panelsub">by how many endpoints can reach them</div>
+          <div class="count hubmode">counted in conservative</div>
           <div class="ovbar">
-            <b title="thing">thing</b>
+            <b class="psplit" title="thing">
+              <span class="ptail">thing</span>
+            </b>
             <span class="ovbartrack">
               <i style="width: 100.0%"></i>
             </span>
             <button class="ovbarn mini" onclick title="which APIs would be affected if you changed this table">9</button>
           </div>
           <div class="ovbar">
-            <b title="thing_tag">thing_tag</b>
+            <b class="psplit" title="thing_tag">
+              <span class="phead">thing_</span>
+              <span class="ptail">tag</span>
+            </b>
             <span class="ovbartrack">
               <i style="width: 11.1%"></i>
             </span>
@@ -367,12 +340,13 @@
             APIs, by how many tables they touch
             <span class="count">(10)</span>
           </h2>
+          <div class="count hubmode">counted in conservative</div>
           <table class="ruled">
             <thead>
               <tr>
-                <th>endpoint</th>
+                <th>API</th>
                 <th class="num">tables</th>
-                <th class="num">statements</th>
+                <th class="num">SQL</th>
               </tr>
             </thead>
             <tbody>
@@ -381,7 +355,10 @@
                   <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                     <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
                   </svg>
-                  <a class="id clickable" onclick title="the chain this call runs through">GET /catalog/list</a>
+                  <a class="id clickable psplit" onclick title="GET /catalog/list
+follow this call down to the tables">
+                    <span class="ptail">GET /catalog/list</span>
+                  </a>
                 </td>
                 <td class="num">1</td>
                 <td class="num">1</td>
@@ -391,7 +368,10 @@
                   <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                     <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
                   </svg>
-                  <a class="id clickable" onclick title="the chain this call runs through">GET /orders/{id}</a>
+                  <a class="id clickable psplit" onclick title="GET /orders/{id}
+follow this call down to the tables">
+                    <span class="ptail">GET /orders/{id}</span>
+                  </a>
                 </td>
                 <td class="num">1</td>
                 <td class="num">1</td>
@@ -401,7 +381,10 @@
                   <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                     <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
                   </svg>
-                  <a class="id clickable" onclick title="the chain this call runs through">GET /page/things</a>
+                  <a class="id clickable psplit" onclick title="GET /page/things
+follow this call down to the tables">
+                    <span class="ptail">GET /page/things</span>
+                  </a>
                 </td>
                 <td class="num">1</td>
                 <td class="num">1</td>
@@ -411,7 +394,11 @@
                   <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                     <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
                   </svg>
-                  <a class="id clickable" onclick title="the chain this call runs through">GET /page/things/new</a>
+                  <a class="id clickable psplit" onclick title="GET /page/things/new
+follow this call down to the tables">
+                    <span class="phead">GET /page</span>
+                    <span class="ptail">/things/new</span>
+                  </a>
                 </td>
                 <td class="num">1</td>
                 <td class="num">1</td>
@@ -421,7 +408,10 @@
                   <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                     <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
                   </svg>
-                  <a class="id clickable" onclick title="the chain this call runs through">GET /things/list</a>
+                  <a class="id clickable psplit" onclick title="GET /things/list
+follow this call down to the tables">
+                    <span class="ptail">GET /things/list</span>
+                  </a>
                 </td>
                 <td class="num">1</td>
                 <td class="num">1</td>

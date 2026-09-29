@@ -206,45 +206,32 @@ function leadOf(text){
 function honesty(resp, scope) {
   const k = 'rail.'+(scope||'x');
   const b = resp.basis||{}, tt = resp.trust||{}, tr = resp.truncated||{};
-  const row=(label,v)=> (v==null||v==='') ? null
-    : el('div',{className:'railrow'},[ el('span',{textContent:label}), el('span',{textContent:String(v)}) ]);
   const chip=(text,title)=> el('span',{className:'railchip', title:title||'', textContent:text});
   // GLANCE. The trust level and the freshness verdict are the engine's own
-  // words and are printed as they arrived, here and in the folds below.
+  // words: the level is printed as it arrived, after the page's gloss of it,
+  // and the verdict rides in the title under the page's words for it (RM67-U2e).
+  const verdict=(b.freshness&&b.freshness.verdict)||'unknown';
   const chips=el('div',{className:'railchips'},[
-    chip(tt.trustLevel||'trust unknown', trustWhy(tt)),
-    chip('freshness '+((b.freshness&&b.freshness.verdict)||'unknown'), 'basis.freshness.verdict'),
+    el('span',{className:'raillbl', textContent:railTrustSay(tt)}),
+    chip(tt.trustLevel||t('rail.trust.unknown'), trustWhy(tt)),
+    chip(railFreshSay(verdict), t('mast.freshness')+' '+verdict+'  basis.freshness.verdict'),
   ]);
   const bodies=[];
   const lim=resp.limits||[];
   if(lim.length){
-    const [head, body]=foldParts(k+'.limits', [lim.length+' limits'],
+    const [head, body]=foldParts(k+'.limits', [t('rail.limits',{n:lim.length})],
       ()=> limitRows(k+'.lim.', lim), 'railchip');
     chips.append(head); bodies.push(body);
+    const whole=railProjectLimits(resp); if(whole) chips.append(whole);
   }
   // A truncation is a count, so it stays outside every fold: one chip per field
   // the answer cut, carrying that field's own name and its shown/total.
   const cut=(tr.fields||[]).filter((f)=>f.nextOffset!=null);
   if(tr.any && cut.length){
-    chips.append(el('span',{className:'raillbl', style:'margin:0 1px', textContent:'truncated'}));
+    chips.append(el('span',{className:'raillbl', style:'margin:0 1px', textContent:t('rail.truncated')}));
     for(const f of cut) chips.append(chip(f.field+' '+f.shown+'/'+f.total, 'order: '+f.order));
   }
-  // READ / INSPECT. `basis` and `trust` are the engine's contract sections and
-  // keep their field names; the masthead's title block already prints the
-  // project, the digest, the lanes and the base commit beside the page.
-  const folds=el('div',{className:'railfolds'},[
-    fold(k+'.basis', ['basis'], ()=> [
-      row('project', b.project),
-      row('digest', b.buildDigest),
-      row('built', b.builtAt ? String(b.builtAt).replace('T',' ').replace(/\..*$/,'') : null),
-      row('freshness', (b.freshness&&b.freshness.verdict)||'unknown'),
-    ].filter(Boolean)),
-    fold(k+'.trust', ['trust'], ()=> [
-      row('level', tt.trustLevel||'—'),
-      row('axes', (tt.axes||[]).join(', ')||'—'),
-      (tt.gatesNotShown||[]).length ? row('gates not shown', tt.gatesNotShown.join(', ')) : null,
-    ].filter(Boolean)),
-  ]);
+  const folds=el('div',{className:'railfolds'}, railFolds(k, b, tt));
   // THE GRADE LEGEND lives here now, in the header of the block that is about
   // what an answer rests on — which is where a reader asks what a grade means.
   // It was a fourth line of the masthead, above every tab, whether or not the
@@ -254,6 +241,45 @@ function honesty(resp, scope) {
       el('h2',{textContent:t('rail.rests')}),
       el('span',{className:'legend'},[t('legend.grade')+' ', ...GRADES.map(badge)]) ]),
     chips, ...bodies, folds ]);
+}
+// THE RAIL IN THE READER'S WORDS (RM67-U2e). "basis", "trust", "4 limits" and
+// "truncated" were page words left in English on a Korean page, and the count
+// read as the same thing as the masthead's "11 limits". Each now says what it
+// counts: this answer's limits, beside the project's. The engine's values (the
+// trust level, the verdict, a field name) are still printed or titled as they came.
+/** The trust level's gloss, before the level itself. */
+function railTrustSay(tt){
+  const lvl=(tt && tt.trustLevel) || null;
+  const say=lvl ? mastSay(mastTrustKey(lvl), '') : '';
+  return say ? t('rail.trust.label', { say }) : t('rail.trust.bare');
+}
+/** The freshness verdict in the page's words: the masthead's, or that it was not checked. */
+function railFreshSay(verdict){
+  const fs=MAST_FRESH[verdict];
+  if(fs && fs.say) return t(fs.say);
+  return verdict==='unknown' ? t('status.fresh.unknown') : t('rail.fresh', { verdict });
+}
+/** The project's own count of limits, beside an answer's, so the two never read as one number. */
+function railProjectLimits(resp){
+  const whole=OV.resp && OV.resp!==resp ? (OV.resp.limits || []).length : 0;
+  return whole ? el('span',{className:'count railwhole', textContent:t('rail.limits.project', { n:whole })}) : null;
+}
+/** The two folds: what the answer was built from, and what its trust level rests on. A row names its contract field in its title. */
+function railFolds(k, b, tt){
+  const row=(label, field, v)=> (v==null||v==='') ? null
+    : el('div',{className:'railrow', title:field},[ el('span',{textContent:t(label)}), el('span',{textContent:String(v)}) ]);
+  return [
+    fold(k+'.basis', [t('rail.basis')], ()=> [
+      row('rail.row.project', 'basis.project', b.project),
+      row('rail.row.digest', 'basis.buildDigest', b.buildDigest),
+      row('rail.row.built', 'basis.builtAt', b.builtAt ? String(b.builtAt).replace('T',' ').replace(/\..*$/,'') : null),
+      row('rail.row.freshness', 'basis.freshness.verdict', (b.freshness&&b.freshness.verdict)||'unknown'),
+    ].filter(Boolean)),
+    fold(k+'.trust', [t('rail.trust')], ()=> [
+      row('rail.row.level', 'trust.trustLevel', tt.trustLevel||'—'),
+      row('rail.row.axes', 'trust.axes', (tt.axes||[]).join(', ')||'—'),
+      (tt.gatesNotShown||[]).length ? row('rail.row.gates', 'trust.gatesNotShown', tt.gatesNotShown.join(', ')) : null,
+    ].filter(Boolean)) ];
 }
 // One limit: its scope chip, then a one-line lead cut from the engine's own
 // reason, folding to that reason in full. A reason short enough to be its own
@@ -300,15 +326,25 @@ function diagGroups(list){
     count:[...causes.values()].reduce((n, x)=> n+x.length, 0),
     causes:[...causes].map(([cause, items])=>({ cause, count:items.length, items })).sort((a, b)=> b.count-a.count) }));
 }
+/**
+ * A DIAGNOSTIC KIND IN THE PAGE'S WORDS (RM67-U2e): "unread setting: API prefix
+ * exclude list" where the engine says TS_PREFIX_EXCLUDE_UNREAD. The code stays
+ * beside it and the engine's own sentences under a fold; a kind the page has no
+ * words for is named by its code.
+ */
+function diagTitle(kind){
+  const key='diag.title.'+kind;
+  return Object.hasOwn(VIEWER_STRINGS.en, key) ? t(key) : t('status.diag.label', { kind });
+}
 /** What one kind's rows say, each with its count, the first few in full, and what to do. */
-function diagGroupBody(key, g){
+function diagGroupBody(key, g, withTodo=true){
   const todoKey='diag.todo.'+g.kind;
   return [ ...g.causes.map((c, i)=> el('div',{className:'diagcause'},[
       el('div',{className:'comment'},[ el('span',{className:'ovnum',textContent:String(c.count)}), '  ', c.count===1 ? c.items[0].reason : c.cause ]),
       c.count>1 ? fold(key+'.'+i, [t('diag.examples',{n:Math.min(DIAG_EXAMPLES, c.count)})], ()=> [
         ...c.items.slice(0, DIAG_EXAMPLES).map((d)=> el('div',{className:'comment'},[d.reason])),
         c.count>DIAG_EXAMPLES ? el('div',{className:'count',textContent:t('diag.examples.more',{n:c.count-DIAG_EXAMPLES})}) : null ], null, true) : null ])),
-    Object.hasOwn(VIEWER_STRINGS.en, todoKey) ? el('div',{className:'comment diagtodo'},[t(todoKey)]) : null ];
+    (withTodo && Object.hasOwn(VIEWER_STRINGS.en, todoKey)) ? el('div',{className:'comment diagtodo'},[t(todoKey)]) : null ];
 }
 /** One kind's limits as one folded row: the kind, how many, and how many different things they say. */
 function diagGroupRow(key, g){

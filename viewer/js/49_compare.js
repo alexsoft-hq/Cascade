@@ -38,9 +38,13 @@ const compareBuilds=()=> (STATE.meta && STATE.meta.projectId===STATE.project && 
 function renderCompareChrome(){
   const builds=compareBuilds();
   const tab=document.querySelector('.tab[data-place="compare"]');
-  if(tab) tab.classList.toggle('hidden', builds.length===0 || !!SNAP);
+  // An old link that lands here with nothing to compare keeps its place marked,
+  // says so, and offers no Draw (RM67-U2e): it used to be a page with no tab lit.
+  const none=builds.length===0;
+  if(tab) tab.classList.toggle('hidden', (none && STATE.tab!=='compare') || !!SNAP);
   const sel=byId('cmpbase');
   if(!sel) return;
+  byId('cmpdraw').disabled=none;
   const was=sel.value;
   sel.replaceChildren(...builds.map(compareOption));
   // The choice a reader made stays; otherwise the newest earlier build is the one shown.
@@ -63,7 +67,7 @@ function compareWhenReady(sel){
   if(CMP.resp){ renderCompare(); return; }
   if(CMP.error){ byId('cmpview').replaceChildren(compareError(CMP.error)); return; }
   if(CMP.pending){ byId('cmpview').replaceChildren(el('div',{className:'empty',textContent:t('compare.loading')})); return; }
-  if(STATE.tab==='compare' && sel.value) drawCompare();
+  if(STATE.tab==='compare') drawCompare();
 }
 async function drawCompare(){
   const view=byId('cmpview');

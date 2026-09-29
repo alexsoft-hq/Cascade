@@ -68,7 +68,8 @@ function laneModel(v, a){
     });
     lanes.push({ field, title, grouped, mk:(x)=>mk(v,x), rows });
   }
-  const labels=chainLabels(lanes.flatMap((l)=> l.rows.map((r)=> r.id)));
+  // An ORM call site is named by the call it makes (RM67-U2e), the same rule the saved SVG reads.
+  const labels=chainLabels(lanes.flatMap((l)=> l.rows.map((r)=> r.id)), CHAIN_FIT, ormCallsOf(a));
   for(const l of lanes) for(const r of l.rows) r.owner=(labels.get(r.id)||{}).owner||r.id;
   // A lane the walk found nothing in is drawn after every lane with rows, so no
   // line runs behind an empty lane to reach the one past it (chainlayout.mjs).
@@ -266,11 +267,14 @@ function laneStrip(v, m, tf){
   strip.classList.remove('hidden');
   if(!v.findEl) v.findEl=laneFindBox(v);
   const e=m.lanes[0].rows[0];
+  // A walk the depth cut is a floor on every lane past it: "0+", not "0" (RM67-U2e).
+  const w=(v.resp && v.resp.answer.walk) || {}, floor=(w.cut && w.cut.depth>0 && w.depth!=null) ? '+' : '';
   const info=el('div',{className:'fstripinfo'},[
     el('span',{className:'fstripstart', title:String(e.id)},[ kindGlyph((e.x&&e.x.kind)||'table', 12),
       el('span',{className:'fstripname', textContent:(m.labels.get(e.id)||{}).text||e.id}) ]),
-    ...m.lanes.slice(1).map((l)=> el('button',{className:'fstripchip', title:t('chain.strip.jump'), onclick:()=>laneJump(v, l.field)},[
-      el('span',{textContent:t(l.title)}), ' ', el('span',{className:'count',textContent:String(tf[l.field] ? tf[l.field].total : l.rows.length)}) ])) ]);
+    ...m.lanes.slice(1).map((l)=> el('button',{className:'fstripchip', title:t(floor ? 'chain.strip.jump.cut' : 'chain.strip.jump', { depth:w.depth }),
+      onclick:()=>laneJump(v, l.field)},[ el('span',{textContent:t(l.title)}), ' ',
+      el('span',{className:'count',textContent:String(tf[l.field] ? tf[l.field].total : l.rows.length)+floor}), el('span',{className:'fstripgo',textContent:'→'}) ])) ]);
   const found=el('span',{className:'count fstripfound',textContent: v.find ? t('chain.find.count',{n:(v.found||new Set()).size}) : ''});
   strip.replaceChildren(info, v.findEl, found);
 }

@@ -271,7 +271,7 @@ const RAIL_TAB_SORT = { trace: { table:'endpoints' } };
 // reader starts from is a property of the project, not of the browser.
 const RAILDEF = {
   trace: { kinds:['endpoint','screen','table','column','statement','symbol'], kind:'table',
-    railId:'tracerail', listId:'tlist', countId:'tcount', moreId:'tmore', sortId:'tsort',
+    railId:'tracerail', listId:'tlist', countId:'tcount', modeId:'tcountmode', moreId:'tmore', sortId:'tsort',
     chipsId:'tkinds', drawerId:'tdrawer', closeId:'tclose', inputId:'tentry', lead:'rail.lead.trace' },
 };
 const RAILTABS = Object.keys(RAILDEF);

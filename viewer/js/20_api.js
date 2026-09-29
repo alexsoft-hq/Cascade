@@ -194,8 +194,7 @@ function resetProjectState(){
     const input=byId(RAILDEF[tab].inputId); if(input) input.value='';
     RAIL[tab]=railFresh(tab);   // …and the filter it held: railFresh types nothing
     byId(RAILDEF[tab].listId).replaceChildren();
-    byId(RAILDEF[tab].countId).replaceChildren();
-    byId(RAILDEF[tab].moreId).replaceChildren();
+    for(const k of ['countId','modeId','moreId']) byId(RAILDEF[tab][k]).replaceChildren();
     if(RAILDEF[tab].chipsId) byId(RAILDEF[tab].chipsId).replaceChildren();
   }
   traceResetProject();

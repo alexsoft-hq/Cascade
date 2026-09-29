@@ -144,10 +144,18 @@ test('every link written before the places lands on the same view, project and s
 });
 
 test('a project with an earlier build shows Compare, and a link to it lands there', async (t) => {
-  const { ctx, body } = await boot(t, { hash: '#p=gamma&tab=compare' });
-  // The fixture keeps no earlier build: the place is absent, and the link says
-  // where the reader is rather than drawing a blank.
+  const { ctx, body, byId } = await boot(t, { hash: '#p=gamma&tab=compare' });
+  // The fixture keeps no earlier build. The reader followed a link here, so the
+  // place stays marked while it is on screen and says there is nothing to
+  // compare, with no Draw to press (RM67-U2e: a page with no place lit read as
+  // broken). Once they leave it, it is absent.
+  assert.equal(placeButton(body, 'compare').classList.contains('hidden'), false);
+  assert.equal(activePlace(body), 'compare');
+  assert.match(byId.get('cmpview').textContent, /no earlier build kept yet/);
+  assert.equal(byId.get('cmpdraw').disabled, true);
+  ev(ctx, "activateTab('start')");
   assert.equal(placeButton(body, 'compare').classList.contains('hidden'), true);
+  ev(ctx, "activateTab('compare')");
   ev(ctx, "STATE.meta = { ...STATE.meta, projectId:'gamma', history:[{ id:'h1', commit:'a'.repeat(40), builtAt:'2026-01-01T00:00:00Z', dirty:false }] }; renderCompareChrome()");
   assert.deepEqual(places(body), ['Start', 'Trace', 'Structure', 'Compare', 'Analysis status']);
   assert.equal(activePlace(body), 'compare');
@@ -268,7 +276,7 @@ test('Start lists the gaps that change an answer, each a way to its row on Analy
   // input first (an axis not collected), then what it could not read.
   assert.match(rows[0], /^screens: not collected/);
   assert.ok(rows.some((x) => x.startsWith('calls we could not follow')));
-  assert.ok(rows.some((x) => x.startsWith('a lane reported TS_PREFIX_EXCLUDE_UNREAD')), 'a lane diagnostic changes an answer too');
+  assert.ok(rows.some((x) => x.startsWith('unread setting: API prefix exclude list')), 'a lane diagnostic changes an answer too');
   assert.ok(!rows.some((x) => x.startsWith('tables no endpoint reaches')), 'a table nothing reaches changes no answer: it is Status only');
   const go = byId.get('sgaps').querySelectorAll('button.sgap').find((b) => b.textContent.startsWith('calls we could not follow'));
   click(go);
@@ -340,7 +348,7 @@ test('a box opens in place and keeps only its own lines; a route in it shows onl
   assert.deepEqual(crumbs.querySelectorAll('.sumcrumb').map((c) => c.textContent), ['Whole map', 'API group order', 'GET /order/{id}']);
   // Every way into Trace from the picked route, beside the picture.
   const side = byId.get('ovsummary').querySelector('.sumdetail');
-  assert.deepEqual(side.querySelector('.sumgo').querySelectorAll('button').map((b) => b.textContent), ['What it uses', 'Where it is used', 'Details']);
+  assert.deepEqual(side.querySelector('.sumgo').querySelectorAll('button').map((b) => b.textContent), ['↓ What it uses', '↑ Where it is used', 'Details']);
   // Back one step, then to the whole map.
   click(crumbs.querySelectorAll('button.sumcrumb')[1]);
   await settle(ctx, 4);
@@ -403,7 +411,10 @@ test('Analysis status: every blind spot says its cause, what it touches and what
   const catalog = axes.find((r) => r.id === 'st-ov-axis-catalog').textContent;
   assert.match(catalog, /collected/);
   assert.match(catalog, /schema\.prisma/);
-  assert.match(axes.find((r) => r.id === 'st-ov-axis-web').textContent, /traced to no client/, 'a whole axis still says its notes');
+  // RM67-U2e: the notes are the engine's sentence, folded under the page's words.
+  const web = axes.find((r) => r.id === 'st-ov-axis-web');
+  web.querySelector('.foldlead').onclick();
+  assert.match(web.textContent, /traced to no client/, 'a whole axis still says its notes');
   // The lanes' diagnostics, one row per kind, with what to do.
   const diag = byId.get('stdiags').querySelector('#st-ov-diag-TS_PREFIX_EXCLUDE_UNREAD');
   assert.ok(diag);

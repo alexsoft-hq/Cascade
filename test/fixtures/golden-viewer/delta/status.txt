@@ -30,51 +30,12 @@
       <span class="msep" aria-hidden="true">
         ·
       </span>
-      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the fingerprint of this build and the commit it was made from" type="button">build</button>
+      <button id="mbuildbtn" class="mbuildbtn" aria-controls="mbuild" aria-expanded="false" data-t="mast.build" data-t-title="mast.build.title" onclick title="the counts along the chain, the fingerprint of this build and the commit it was made from" type="button">counts and build</button>
       <span id="mbuild" class="mbuild hidden">…</span>
     </div>
-    <div id="crail" class="crail" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">
-      <span class="crlane">
-        screens
-        <b>2</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="an API group is the first segment of a route below the prefix the application is deployed under, like the users in /api/v1/users/list. It is how the routes are named, not a module anyone declared. Structure and Trace group routes this way too, and the map on Start says what its own boxes are.">
-        api groups by path
-        <b>1</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        endpoints
-        <b>2</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane" title="the methods the routes' walks pass through between a controller method and the SQL, each counted once: the services lane Flow draws, and a method that sends its SQL from its own body, such as a service calling the ORM, which Flow draws inside the statement it sends. A controller method, a frontend function, a library method and a mapper or repository method that only declares a statement are not counted.">
-        services
-        <b>2</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        SQL
-        <b>2</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        tables
-        <b>1</b>
-      </span>
-      <span class="crrule"></span>
-      <span class="crlane">
-        columns
-        <b>2</b>
-      </span>
-    </div>
+    <div id="crail" class="crail hidden" title="the steps this tool follows, in order. Every count comes straight from the overview answer.">…</div>
     <div id="mchips" class="mchips">
-      <span id="mfreshchip" class="mchip quiet" title="there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.  freshness unknown  basis.freshness.verdict">
-        <span class="mdot" aria-hidden="true"></span>
-        <span id="mfreshsr" class="sronly">freshness unknown</span>
-        <span id="mfresh"></span>
-      </span>
+      <span id="mfreshchip" class="mchip quiet hidden" title="there is no git commit to compare with, so nothing says whether this build is behind your working tree. It is not an error.  freshness unknown  basis.freshness.verdict">…</span>
       <span id="mtrustchip" class="mchip quiet warn hidden">…</span>
       <span id="mtracechip" class="mchip quiet hidden">…</span>
       <span id="mlimitcell">
@@ -83,7 +44,7 @@
             <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
           </svg>
           <span class="foldtext">
-            3 limits
+            3 project limits
           </span>
         </button>
       </span>
@@ -101,16 +62,18 @@
     </div>
     <div id="proj" class="mnote"></div>
     <div id="snapbar" class="snapbar hidden" role="note"></div>
-    <div class="tabs" role="tablist">
-      <button class="tab" aria-selected="false" data-place="start" data-t="tab.start" onclick type="button">Start</button>
-      <button class="tab" aria-selected="false" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
-      <button class="tab" aria-selected="false" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
-      <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
-      <button class="tab active" aria-selected="true" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
-    </div>
-    <div id="subtabs" class="subtabs" role="tablist">
-      <button class="subtab active" onclick type="button">Scope and gaps</button>
-      <button class="subtab" onclick type="button">Rules</button>
+    <div class="tabrow">
+      <div class="tabs" role="tablist">
+        <button class="tab" aria-selected="false" data-place="start" data-t="tab.start" onclick type="button">Start</button>
+        <button class="tab" aria-selected="false" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
+        <button class="tab" aria-selected="false" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
+        <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
+        <button class="tab active" aria-selected="true" data-place="status" data-t="tab.status" onclick type="button">Analysis status</button>
+      </div>
+      <div id="subtabs" class="subtabs" role="tablist">
+        <button class="subtab active" onclick type="button">Scope and gaps</button>
+        <button class="subtab" onclick type="button">Rules</button>
+      </div>
     </div>
   </header>
   <div class="wrap">
@@ -137,15 +100,25 @@
       <div id="stfacts" class="stfacts">
         <div class="panel stfact">
           <h2>How fresh</h2>
-          <div class="stbig">not compared with your working tree</div>
-          <div class="comment">there is no git commit to compare this build against, so there is nothing to say about how old it is. That is the resting state of a pack, not a failure.</div>
+          <div class="stbig">not checked against a commit</div>
+          <div class="comment">there is no git commit to compare with, so nothing says whether this build is behind your working tree. It is not an error.</div>
           <div class="count">built 2026-09-04 00:00:00 from commit ?, digest baa6aa516adc</div>
         </div>
         <div class="panel stfact">
           <h2>Verification</h2>
           <div class="stbig">not certified</div>
           <div class="comment">there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.</div>
-          <div class="comment">two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.</div>
+          <div class="fold">
+            <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+              <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+              </svg>
+              <span class="foldtext">
+                How to change this
+              </span>
+            </button>
+            <div class="foldbody"></div>
+          </div>
           <div class="ovchips">
             <span class="tag">calibration-gate</span>
             <span class="tag">golden:all-relations</span>
@@ -194,10 +167,10 @@
           <div id="stgaps">
             <div id="ovgaps" class="panel">
               <h2>
-                What we could not see
+                What the analysis did not see
                 <span class="count">(3)</span>
               </h2>
-              <div class="panelsub">Each row says its cause, what it touches, and what to do. The cause is the engine's own sentence, and it opens to the whole of it.</div>
+              <div class="panelsub">Each row says its cause in plain words, what it touches, and what to do. The engine's own sentence is under the cause, folded.</div>
               <div class="stgrp">
                 <div class="ovgaplbl">What it could not read</div>
                 <div id="st-ov-gap-unresolved-calls" class="stitem warn">
@@ -208,16 +181,19 @@
                   <div class="stline">
                     <span class="stlbl">cause</span>
                     <div class="stval">
-                      <div class="fold">
-                        <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
-                          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                          </svg>
-                          <span class="foldtext">
-                            this pack kept no lane statistics, so we cannot say how many method calls we failed to…
-                          </span>
-                        </button>
-                        <div class="foldbody"></div>
+                      <div>
+                        <span>The analysis could not tell where — method calls go, so they are not in the graph, and a chain that needed one ends early.</span>
+                        <div class="fold">
+                          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                            </svg>
+                            <span class="foldtext">
+                              the engine's own words
+                            </span>
+                          </button>
+                          <div class="foldbody"></div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -238,26 +214,29 @@
                 </div>
               </div>
               <div class="stgrp">
-                <div class="ovgaplbl">What this walk left out</div>
+                <div class="ovgaplbl">Links this mode does not follow</div>
                 <div id="st-ov-gap-mode-floor" class="stitem">
                   <div class="stitemhead">
-                    <b>connections this mode leaves out</b>
+                    <b>links this mode leaves out</b>
                     <span class="ovnum">1</span>
                     <span class="ovdiag" title="the engine's own name for this kind">mode-floor</span>
                   </div>
                   <div class="stline">
                     <span class="stlbl">cause</span>
                     <div class="stval">
-                      <div class="fold">
-                        <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
-                          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                          </svg>
-                          <span class="foldtext">
-                            walked at mode=conservative, no depth cap: 1 flow edge(s) sit below this mode's grade…
-                          </span>
-                        </button>
-                        <div class="foldbody"></div>
+                      <div>
+                        <span>1 links are graded below what conservative follows, so every count here stops before them.</span>
+                        <div class="fold">
+                          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                            </svg>
+                            <span class="foldtext">
+                              the engine's own words
+                            </span>
+                          </button>
+                          <div class="foldbody"></div>
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -290,23 +269,26 @@
                   <div class="stline">
                     <span class="stlbl">cause</span>
                     <div class="stval">
-                      <div class="fold">
-                        <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
-                          <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                            <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                          </svg>
-                          <span class="foldtext">
-                            1 screen(s) here are known partly from a recording: 0 that the source never declared,…
-                          </span>
-                        </button>
-                        <div class="foldbody"></div>
+                      <div>
+                        <span>1 screens are known partly from a recording. They are shown beside the counts, never inside them.</span>
+                        <div class="fold">
+                          <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                            <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                              <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                            </svg>
+                            <span class="foldtext">
+                              the engine's own words
+                            </span>
+                          </button>
+                          <div class="foldbody"></div>
+                        </div>
                       </div>
                     </div>
                   </div>
                   <div class="stline">
                     <span class="stlbl">touches</span>
                     <div class="stval">
-                      <span>Nothing changes. It is said so the counts read right.</span>
+                      <span>No answer changes. It is said so the counts read right.</span>
                     </div>
                   </div>
                   <div class="stline">
@@ -322,10 +304,10 @@
           <div id="stdiags">
             <div id="stdiag" class="panel">
               <h2>
-                What the lanes reported
+                What the analyzers warned about
                 <span class="count">(0)</span>
               </h2>
-              <div class="panelsub">No lane reported a problem.</div>
+              <div class="panelsub">No analyzer warned about anything.</div>
             </div>
           </div>
           <div id="stconnected"></div>
@@ -374,57 +356,57 @@
                 </thead>
                 <tbody>
                   <tr>
-                    <td>
+                    <td title="symbol">
                       <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                         <circle cx="6" cy="6" fill="none" r="2.9" stroke="#A78BFA" stroke-width="1.4"></circle>
                       </svg>
-                      symbol
+                      Methods
                     </td>
                     <td class="num">9</td>
                   </tr>
                   <tr>
-                    <td>
+                    <td title="column">
                       <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                         <circle cx="6" cy="6" fill="#F472B6" r="2"></circle>
                       </svg>
-                      column
+                      Columns
                     </td>
                     <td class="num">2</td>
                   </tr>
                   <tr>
-                    <td>
+                    <td title="endpoint">
                       <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                         <path d="M3.2,2.3L9.5,6L3.2,9.7Z" fill="#22D3EE"></path>
                       </svg>
-                      endpoint
+                      Endpoints
                     </td>
                     <td class="num">2</td>
                   </tr>
                   <tr>
-                    <td>
+                    <td title="screen">
                       <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                         <rect fill="none" height="7.2" rx="1" stroke="#F9A8D4" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="2.4"></rect>
                         <line stroke="#F9A8D4" stroke-width="1.2" x1="1.7999999999999998" x2="10.2" y1="4.6" y2="4.6"></line>
                       </svg>
-                      screen
+                      Screens
                     </td>
                     <td class="num">2</td>
                   </tr>
                   <tr>
-                    <td>
+                    <td title="statement">
                       <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                         <path d="M6,2.1L9.9,6L6,9.9L2.1,6Z" fill="#FB923C"></path>
                       </svg>
-                      statement
+                      Statements
                     </td>
                     <td class="num">2</td>
                   </tr>
                   <tr>
-                    <td>
+                    <td title="table">
                       <svg class="kglyph" aria-hidden="true" height="12" viewBox="0 0 12 12" width="12">
                         <rect fill="none" height="5.6" stroke="#34D399" stroke-width="1.4" width="8.4" x="1.7999999999999998" y="3.2"></rect>
                       </svg>
-                      table
+                      Tables
                     </td>
                     <td class="num">1</td>
                   </tr>
@@ -548,7 +530,7 @@
               </table>
             </div>
             <div class="panel">
-              <h2>The Java side</h2>
+              <h2>The backend code</h2>
               <table class="ruled">
                 <thead>
                   <tr>
@@ -558,11 +540,11 @@
                 </thead>
                 <tbody>
                   <tr title="methods we read out of the Java source">
-                    <td>symbols</td>
+                    <td>methods</td>
                     <td class="num">9</td>
                   </tr>
                   <tr title="a library or framework class with no source here, so a chain that runs into one stops there">
-                    <td>external types</td>
+                    <td>library types</td>
                     <td class="num">0</td>
                   </tr>
                   <tr title="methods marked `@Transactional`, so everything under one runs in a single commit">
@@ -605,14 +587,15 @@
               </span>
             </div>
             <div class="railchips">
+              <span class="raillbl">verification: not certified</span>
               <span class="railchip" title="there is no approved golden set for this project yet, so every edge carries its own grade and the answer as a whole is not scored.  two things move this: approve a golden set for this project with cascade golden propose and then cascade golden approve, or label the checks from a recording of the program with cascade golden propose --from-otel <trace>.  trust UNCERTIFIED  trust.trustLevel  calibration-gate  golden:all-relations  no-calibration-state  no-project-golden">UNCERTIFIED</span>
-              <span class="railchip" title="basis.freshness.verdict">freshness unknown</span>
+              <span class="railchip" title="freshness unknown  basis.freshness.verdict">not checked against a commit</span>
               <button class="foldlead railchip" aria-expanded="false" aria-label="show the full text" onclick type="button">
                 <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
                   <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
                 </svg>
                 <span class="foldtext">
-                  3 limits
+                  3 limits on this answer
                 </span>
               </button>
             </div>
@@ -624,7 +607,7 @@
                     <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
                   </svg>
                   <span class="foldtext">
-                    basis
+                    what it was built from
                   </span>
                 </button>
                 <div class="foldbody"></div>
@@ -635,7 +618,7 @@
                     <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
                   </svg>
                   <span class="foldtext">
-                    trust
+                    what the trust level rests on
                   </span>
                 </button>
                 <div class="foldbody"></div>

@@ -45,7 +45,8 @@ function rulesFailed(e, mine){
 /** The list landed: open on what applies here when anything does, and on its biggest rule. */
 function rulesTake(r){
   RULES.list=r;
-  if(RULES.scope===null) RULES.scope = r.answer.totals.here>0 ? 'here' : 'all';
+  // What applies here first, even when that is nothing: the list then says so (rulesNoneShown).
+  if(RULES.scope===null) RULES.scope='here';
   RULES.pick=rulesDefaultPick();
   drawRules();
   rulesLoadExamples();

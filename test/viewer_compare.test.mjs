@@ -171,6 +171,13 @@ test('switching to a project with no earlier build hides the place and drops the
   ev(page.ctx, "switchProject('alpha')");
   await settle(page.ctx);
   assert.equal(ev(page.ctx, 'CMP.resp'), null);
+  // RM67-U2e: the reader is on it, so the place stays marked and says there is
+  // nothing to compare, with no Draw to press; once they leave, it is hidden.
+  assert.equal(placeButton(page).classList.contains('hidden'), false, 'a page with no place marked read as broken');
+  assert.match(view(page).textContent, /this project has no earlier build kept yet/);
+  assert.equal(page.byId.get('cmpdraw').disabled, true);
+  ev(page.ctx, "activateTab('start')");
+  await settle(page.ctx);
   assert.equal(placeButton(page).classList.contains('hidden'), true);
 });
 
@@ -283,7 +290,7 @@ test('Trace is offered for an endpoint the head still has, and the one the earli
   const here = rows(page).find((li) => li.textContent.startsWith('GET /order/{id}'));
   assert.ok(here, 'the route above the changed symbol is listed');
   const flow = here.querySelector('button');
-  assert.equal(flow.textContent, 'What it uses');
+  assert.equal(flow.textContent, '↓ What it uses');
   flow.onclick();
   await settle(page.ctx, 3);
   assert.equal(ev(page.ctx, 'STATE.tab'), 'trace');
@@ -473,7 +480,7 @@ test('an edge whose evidence only points elsewhere in the source is a moved edge
   assert.match(text, /Source location only: 0 node\(s\) and 1 edge\(s\) moved/);
   // The screen whose title changed is above its own change, in the head, so it opens on Trace, walked down.
   const screen = panelRows(page, 'Screens above the change (1)')[0];
-  assert.match(screen.textContent, /^\/rowsWhat it uses$/);
+  assert.match(screen.textContent, /^\/rows↓ What it uses$/);
   screen.querySelector('button').onclick();
   await settle(page.ctx, 3);
   assert.equal(ev(page.ctx, 'STATE.tab'), 'trace');

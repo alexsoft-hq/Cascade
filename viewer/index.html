@@ -86,7 +86,7 @@
     --panel-shadow:0 12px 40px rgba(0,0,0,.35);
     --r-panel:14px; --r-chip:999px; --r-tag:4px;
     --body-bg:radial-gradient(1200px 600px at 20% -10%,#1A2447 0%,var(--g0) 55%);
-    --head-bg:transparent; --field-bg:rgba(255,255,255,.03);
+    --head-bg:var(--g1); --field-bg:rgba(255,255,255,.03);
     --src-hi:rgba(96,165,250,.14);
     --halo:rgba(11,16,32,.86); --dim-node:rgba(167,179,209,.28); --dim-link:rgba(167,179,209,.10);
     --overlay:rgba(17,23,41,.82);
@@ -145,8 +145,7 @@
      `#proj` is a direct child of <header>, so test/viewer_page.test.mjs still
      walks #proj -> header -> body -> .tab. */
   header { background:var(--head-bg); border-bottom:1px solid var(--hair);
-    padding:14px clamp(14px,2.2vw,40px) 0; position:sticky; top:0; z-index:5;
-    backdrop-filter:blur(6px);
+    padding:10px clamp(14px,2.2vw,40px) 0; position:sticky; top:0; z-index:5;
     display:grid; grid-template-columns:auto minmax(0,1fr) auto;
     column-gap:16px; row-gap:0; align-items:center; }
   h1 { grid-column:1; grid-row:1; margin:0; display:flex; align-items:center; gap:12px;
@@ -214,6 +213,9 @@
      by hairlines. A lane the pack does not ship is drawn hollow. */
   .crail { grid-column:1 / span 2; grid-row:2; display:flex; flex-wrap:wrap; align-items:baseline;
     font-size:12px; color:var(--t3); padding:6px 0 2px; }
+  /* The counts are one click away, behind the same control as the build
+     identity (RM67-U2e): a second masthead line on every place was the price. */
+  .crail.hidden { display:none; }
   .crlane { display:inline-flex; align-items:baseline; gap:7px; white-space:nowrap; }
   .crlane b { font:500 13px/1 var(--mono); color:var(--t1); font-variant-numeric:tabular-nums; }
   .crlane.hollow, .crlane.hollow b { color:var(--t3); font-weight:400; }
@@ -294,6 +296,8 @@
   .sumpic { display:grid; grid-template-columns:minmax(0,1fr) minmax(48px,.9fr) minmax(0,1fr); position:relative; min-width:0; }
   .sumcol { display:flex; flex-direction:column; gap:8px; min-width:0; }
   .sumlinks { position:absolute; left:0; top:0; pointer-events:none; overflow:visible; }
+  /* A line's count (RM67-U2e), on a halo of the ground so it reads over the lines behind it. */
+  .sumlinks text.sumlbl { font:11px var(--mono); fill:var(--t1); paint-order:stroke; stroke:var(--g1); stroke-width:4px; stroke-linejoin:round; }
   .sumbox { display:flex; flex-direction:column; border:1px solid var(--frame); background:var(--g1); min-width:0; }
   .sumbox.sumothers { border-style:dashed; }
   .sumbox.open { box-shadow:inset 3px 0 0 var(--t1); border-color:var(--t1); }
@@ -323,7 +327,9 @@
   /* ---- the five places (RM67-U2c) ------------------------------------------ */
   /* The second row: the views inside the place on screen, smaller than the
      places and set on the same rule, so the two rows read as one address. */
-  .subtabs { grid-column:1 / -1; grid-row:6; display:flex; gap:18px; flex-wrap:wrap; padding:2px 0 0; }
+  /* RM67-U2e: on the places' own row, after a hairline, so the masthead is two
+     rows at most: the brand line and the places. */
+  .subtabs { display:flex; gap:18px; flex-wrap:wrap; align-items:flex-end; padding:0 0 0 18px; border-left:1px solid var(--hair); margin:6px 0 0; }
   .subtab { padding:6px 0 8px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px; border-radius:0;
     background:none; color:var(--t2); cursor:pointer; font-size:13px; font-family:inherit; }
   .subtab:hover { color:var(--t1); border-bottom-color:var(--frame); }
@@ -347,8 +353,22 @@
   .startq .sqsub { font-size:12.5px; color:var(--t2); line-height:1.45; overflow-wrap:anywhere; }
   .startq.off { border-style:dashed; background:none; }
   .startq.off .sqtitle { color:var(--t2); }
+  /* THE CAUSE FIRST (RM67-U2e): where the mode stops every walk at the start,
+     one line before anything else, with the engine's fix and the wider mode. */
+  .startlead { display:flex; flex-wrap:wrap; align-items:baseline; gap:6px 14px; padding:10px 14px; margin:0 0 14px;
+    border:1px solid var(--warn); border-left-width:4px; background:var(--g1); }
+  .startlead .startleadsay { font-weight:600; color:var(--t1); flex:1 1 420px; }
+  .startlead .remedy { flex:1 1 100%; margin:0; }
+  /* The mode the shares under the map were counted in, said once over them. */
+  .skpimode { font-size:12.5px; color:var(--t2); margin:14px 0 6px; }
+  .hubmode { margin:-2px 0 6px; }
+  .wrapcell a.psplit { display:inline-flex; max-width:calc(100% - 18px); vertical-align:bottom; }
+  /* A name gives way in its cell, so a long one never widens the table past the page. */
+  .ovpanels3 table.ruled { table-layout:fixed; width:100%; }
+  .ovpanels3 table.ruled th.num { width:5em; }
+  .ovbar b.psplit { display:flex; }
   .startgrid { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:14px; align-items:start; }
-  @media (max-width:1100px){ .startgrid { grid-template-columns:minmax(0,1fr); } }
+  @media (max-width:900px){ .startgrid { grid-template-columns:minmax(0,1fr); } }
   .sfacts { display:grid; gap:6px; margin-bottom:10px; }
   .sfact { display:flex; gap:10px; align-items:baseline; flex-wrap:wrap; font-size:13px; }
   .sfact .raillbl { display:inline; margin:0; min-width:6em; }
@@ -402,6 +422,10 @@
   .stline { display:grid; grid-template-columns:7.5em minmax(0,1fr); gap:10px; font-size:12.5px; line-height:1.45; padding:2px 0; }
   @media (max-width:620px){ .stline { grid-template-columns:minmax(0,1fr); gap:0; } }
   .stlbl { color:var(--t3); }
+  /* The engine's own sentence, folded under the page's (RM67-U2e): kept, quieter. */
+  .engine .foldlead, .stval .fold .foldlead { color:var(--t3); font-size:12px; }
+  .comment.engine { font-family:var(--mono); font-size:11.5px; }
+  button.stcauselink { margin-top:4px; }
   .stval { min-width:0; color:var(--t1); overflow-wrap:anywhere; }
   .stval code { font-family:var(--mono); font-size:12px; }
   .stval .ovchips { margin-top:4px; }
@@ -422,16 +446,19 @@
   @media (max-width:1660px){ body.snapshot .flowgrid { grid-template-columns:minmax(0,1fr); grid-template-areas:"canvas" "side"; } }
   /* Tabs are WORDS ON A RULE: the active one is underlined in the endpoint hue,
      sitting on the header's own bottom hairline. No folders, no fills. */
-  .tabs { grid-column:1 / -1; grid-row:5; display:flex; gap:24px; flex-wrap:wrap; margin-top:10px;
-    border-bottom:1px solid var(--hair); margin-bottom:-1px; }
-  /* Under 1100px the chips drop below the line rather than squeezing it. */
-  @media (max-width:1100px){
+  .tabrow { grid-column:1 / -1; grid-row:5; display:flex; align-items:flex-end; gap:0 18px; flex-wrap:wrap;
+    margin-top:8px; border-bottom:1px solid var(--hair); margin-bottom:-1px; }
+  .tabs { display:flex; gap:24px; flex-wrap:wrap; }
+  /* THE MASTHEAD IS ONE LINE AT 1100 AND UP (RM67-U2e): the brand, the dateline
+     and the chips, then the places. It used to be three lines and a tab row at
+     1100, a sixth of a 900px screen held above every place. Under 900px the
+     chips drop below the line rather than squeezing it. */
+  @media (max-width:900px){
     header { grid-template-columns:auto minmax(0,1fr); row-gap:6px; }
     .mchips { grid-column:1 / -1; grid-row:3; justify-self:start; justify-content:flex-start; }
     .mfolds { grid-row:4; }
     .mnote, .snapbar { grid-row:5; }
-    .tabs { grid-row:6; margin-top:4px; }
-    .subtabs { grid-row:7; }
+    .tabrow { grid-row:6; margin-top:4px; }
   }
   .tab { padding:8px 0 11px; border:0; border-bottom:2px solid transparent; margin-bottom:-1px;
     background:none; color:var(--t2); cursor:pointer; font-size:14px; font-family:inherit; }
@@ -482,6 +509,7 @@
   .rulegave.here { color:var(--t1); }
   .rulemeta { display:flex; gap:5px; align-items:center; flex-wrap:wrap; margin-top:4px; }
   .rulemore { font-size:12px; color:var(--t2); padding:9px 14px 4px; }
+  .rulenone { font-size:13px; color:var(--t1); line-height:1.5; padding:10px 14px; border-left:3px solid var(--frame); margin:6px 14px; }
   .rulegrade, .rulecap { display:inline-flex; align-items:center; gap:4px; font-size:12px; color:var(--t3); }
   .rulehead { display:flex; gap:7px; align-items:center; flex-wrap:wrap; margin-bottom:6px; }
   .ruledetail h3 { font-size:13px; margin:16px 0 6px; }
@@ -827,7 +855,10 @@
   .fstripstart { display:inline-flex; align-items:center; gap:6px; min-width:0; max-width:100%;
     font:500 12.5px var(--mono); color:var(--t1); margin-right:4px; }
   .fstripname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0; }
-  button.fstripchip { padding:2px 8px; font-size:12px; white-space:nowrap; }
+  button.fstripchip { padding:2px 8px; font-size:12px; white-space:nowrap; cursor:pointer; }
+  /* A chip is a way to its lane, and says so before it is touched (RM67-U2e). */
+  .fstripgo { margin-left:5px; color:var(--t3); }
+  button.fstripchip:hover .fstripgo { color:var(--t1); }
   input.fstripfind { width:190px; max-width:100%; font-size:12px; padding:4px 8px; }
   .fstripfound { white-space:nowrap; }
   /* THE TRACE PLACE (RM67-U2b). The direction switch sits after the Trace
@@ -836,10 +867,27 @@
      have, in words, instead of a greyed-out button nobody can ask about. */
   .tdir:empty { display:none; }
   .tdir button { white-space:nowrap; }
-  .tracehead { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; padding:7px 10px;
-    border:1px solid var(--frame); border-bottom:0; background:var(--g2); font-size:12.5px; color:var(--t2); }
+  .tracehead { padding:8px 10px; border:1px solid var(--frame); border-bottom:0; background:var(--g2);
+    font-size:12.5px; color:var(--t2); }
+  .tracehead .tquestionrow { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; }
   .tracehead .tquestion { color:var(--t1); }
-  .tracehead .tnodir { color:var(--t3); }
+  .tracehead .tnodir { color:var(--t3); margin-top:4px; }
+  /* THE ANSWER, said first (RM67-U2e, 58_answer.js): one sentence at reading
+     size, what it was counted in beside it, and under it the ends a reader came
+     for, so the APIs and screens are on screen before the picture is scrolled. */
+  .tanswer { display:flex; flex-wrap:wrap; align-items:baseline; gap:4px 12px; margin-top:6px; }
+  .tanswersay { font-size:15px; font-weight:600; color:var(--t1); }
+  .tanswermode, .tanswercut { font-size:12px; color:var(--t2); }
+  .tanswer.tfloor .tanswersay { color:var(--warn); font-weight:500; font-size:14px; }
+  .tends { display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:8px 14px; margin-top:8px; }
+  .tend { min-width:0; display:flex; flex-direction:column; gap:1px; }
+  button.tendhead { align-self:flex-start; background:none; border:0; border-bottom:1px solid var(--hair); border-radius:0;
+    padding:0 0 2px; margin-bottom:3px; font:600 12px var(--sans); color:var(--t1); cursor:pointer; }
+  button.tendhead:hover { border-bottom-color:var(--frame); }
+  button.tendrow { display:flex; min-width:0; max-width:100%; background:none; border:0; border-radius:0; padding:1px 0;
+    font:12px var(--mono); color:var(--t1); text-align:left; cursor:pointer; }
+  button.tendrow:hover { color:var(--k-endpoint); }
+  .tendmore { font-size:11.5px; }
   .flowpane > .tracehead + .fstrip { border-top:1px solid var(--hair); }
   .tracedetail { min-width:0; }
   .flowpane.detailmode .flowcanvas, .flowpane.detailmode .fstrip { display:none; }
@@ -1086,6 +1134,8 @@
   .brout { display:block; color:var(--t3); font-family:var(--sans);
     font-size:12px; line-height:1.35; margin-top:2px; }
   .brout.brwarn { color:var(--warn); }
+  .brcount.brmode { margin-left:8px; font-family:var(--sans); }
+  .brcount.brmode:empty { display:none; }
   .brgrade { display:inline-flex; }
   .leftout .honesty { margin-top:6px; }
   .leftfix { margin-top:10px; }
@@ -1116,7 +1166,11 @@
     text-overflow:ellipsis; white-space:nowrap; color:var(--t1); }
   .brsub { font-size:12px; color:var(--t3); margin-top:1px; overflow:hidden;
     text-overflow:ellipsis; white-space:nowrap; }
-  .brstats { display:flex; align-items:center; gap:7px; flex:none; }
+  .brstats { display:flex; align-items:center; gap:9px; flex:none; }
+  /* The numbers under the name (RM67-U2e): the name keeps the whole width, and
+     what the row says of itself (a comment, a file) takes what the numbers leave. */
+  .brmeta { display:flex; align-items:baseline; gap:10px; min-width:0; margin-top:1px; }
+  .brmeta .brsub { flex:1 1 auto; min-width:0; margin-top:0; }
   /* A route cut from the middle (pathLabel): the head gives way, the tail stays. */
   .psplit { display:flex; min-width:0; }
   .psplit .phead { flex:0 1 auto; min-width:2ch; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1126,7 +1180,7 @@
      engine's own nouns and are the same in every language, the number stays in
      tabular figures so a column of rows lines up, and the full sentence is
      still in the chip's title. */
-  .brstat { display:inline-flex; align-items:baseline; gap:3px;
+  .brstat { display:inline-flex; align-items:baseline; gap:4px;
     font-variant-numeric:tabular-nums; font-size:12px; color:var(--t2); }
   .brstat .brlbl { font-size:11px; color:var(--t3); }
   .brstat.read, .brstat.read .brlbl { color:var(--read); }
@@ -1386,7 +1440,7 @@
   <!-- The cascade rail: the six lanes of the chain this product walks, in the
        order it walks them, joined by hairlines. Every count is the `overview`
        answer's own node census — the page counts nothing itself. -->
-  <div class="crail" id="crail"></div>
+  <div class="crail hidden" id="crail"></div>
   <!-- What this answer is worth, and the two things the reader may change:
        freshness, trust, the limits (the same fold the evidence rail carries),
        the interface language and the theme. Built in renderMastChrome().
@@ -1421,6 +1475,7 @@
        row under this one, `#subtabs`, drawn by renderPlaceChrome() in
        30_chrome.js. A view is still what the page draws and what a URL's `tab=`
        names, so every link written before this row still lands. -->
+  <div class="tabrow">
   <div class="tabs" role="tablist">
     <button type="button" class="tab active" data-place="start" data-t="tab.start">Start</button>
     <button type="button" class="tab" data-place="trace" data-t="tab.trace">Trace</button>
@@ -1429,6 +1484,7 @@
     <button type="button" class="tab" data-place="status" data-t="tab.status">Analysis status</button>
   </div>
   <div class="subtabs hidden" id="subtabs" role="tablist"></div>
+  </div>
 </header>
 
 <div class="wrap">
@@ -1439,9 +1495,14 @@
        what the analysis did not see). Under them, what this analysis can see and
        the gaps that change an answer, then the summary map (50_summary.js), the
        way into the pack for a reader with no target yet. Everything else the
-       Overview held is on Analysis status. -->
+       Overview held is on Analysis status.
+       RM67-U2e: where the mode stops every walk at the start, a line says so
+       first (#slead, with the fix and the wider mode); the map comes before the
+       shares, and its mode control moves the shares and the busiest lists
+       with it, each of which says the mode it was counted in. -->
   <div id="tab-start">
     <div class="hint" data-t-fold="hint.start"></div>
+    <div id="slead" class="startlead hidden" role="note"></div>
     <div class="panel startask">
       <h2 data-t="start.ask.title">Ask about one thing</h2>
       <div class="startsearch">
@@ -1455,8 +1516,9 @@
       <div id="sscope" class="panel"></div>
       <div id="sgaps" class="panel"></div>
     </div>
-    <div id="ovcards" class="ovkpis"></div>
     <div id="ovsummary" class="panel summap"></div>
+    <div id="skpimode" class="skpimode"></div>
+    <div id="ovcards" class="ovkpis"></div>
     <div id="shubs" class="ovpanels3"></div>
   </div>
 
@@ -1471,7 +1533,7 @@
   <div id="tab-trace" class="hidden">
     <div class="searchbar">
       <button id="tdrawer" class="brtoggle" data-t="rail.browse" data-t-title="rail.browse.title" title="open the list of things you can pick from">Browse</button>
-      <div style="position:relative;flex:1;min-width:240px">
+      <div style="position:relative;flex:1;min-width:160px">
         <input type="text" id="tentry" style="width:100%" data-t-ph="trace.entry.ph" placeholder="an API, screen, table, column, SQL or method" autocomplete="off">
         <div id="tsug" class="sug hidden"></div>
       </div>
@@ -1489,11 +1551,15 @@
            follows (above), the DEPTH how many links it follows at most, and the
            rows per lane how many are shown (each lane's own "fetch more"). -->
       <details class="tbmenu" id="topts"><summary data-t="btn.options" data-t-title="btn.options.title" title="how deep to follow, how to draw it, and whether the dots run">Options</summary>
-        <div class="tbmenubody">
+        <div class="tbmenubody tbcol">
           <label class="tbfield"><span data-t="tb.depth">depth</span>
             <select id="tdepth" data-t-title="trace.depth.title" title="the most links a walk follows from the target"><option value="" selected data-t="depth.all">all</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option></select></label>
           <span class="seg" id="tview" data-t-title="view.title" title="chain draws the whole path left to right. by hop groups the same rows one step at a time."><button class="on" data-view="lanes" data-t="view.lanes">chain</button><button data-view="layers" data-t="view.layers">by hop</button></span>
           <button id="tflow" aria-pressed="true" title="the dots run the way the call goes. Click to stop them.">Flow on</button>
+          <!-- RM67-U2e: the two questions that are not about a target live in
+               this menu, named for what they do, so the toolbar is one line. -->
+          <button id="tedits" data-t="explore.edits" data-t-title="explore.edits.title" title="what your uncommitted git changes would affect">What my uncommitted edits touch</button>
+          <button id="tshowall" class="showall" data-t="trace.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Start over: nothing picked</button>
         </div>
       </details>
       <details class="tbmenu" id="texports"><summary data-t="btn.export.menu" data-t-title="btn.export.menu.title" title="save this picture as a file">Save as</summary>
@@ -1501,8 +1567,6 @@
           <button id="texport" disabled data-t="btn.export" data-t-title="btn.export.title" title="save this picture as one HTML file">Export</button><button id="tsvg" disabled data-t-title="btn.svg.title" title="save this picture as SVG">SVG</button><button id="tpng" disabled data-t-title="btn.png.title" title="save this picture as PNG">PNG</button>
         </div>
       </details>
-      <button id="tedits" data-t="explore.edits" data-t-title="explore.edits.title" title="what your uncommitted git changes would affect">My edits</button>
-      <button id="tshowall" class="showall" data-t="btn.showall" data-t-title="btn.showall.title" title="back to this tab as it opened: nothing picked, nothing filtered">Show all</button>
     </div>
     <div class="hint" data-t-fold="hint.trace"></div>
     <div class="flowgrid">
@@ -1511,7 +1575,7 @@
           <span class="seg brkinds" id="tkinds"></span>
           <div class="brsort">
             <select id="tsort" data-t-title="rail.sort.title" title="what puts a row at the top of this list"></select>
-            <span class="brcount" id="tcount"></span>
+            <span class="brcount" id="tcount"></span><span class="brcount brmode" id="tcountmode" data-t-title="rail.count.mode.title"></span>
             <button id="tclose" class="brclose" data-t-title="rail.close" title="close the list">&#x2715;</button>
           </div>
         </div>
@@ -1756,6 +1820,7 @@
 <script src="/viewer/js/55_trace_detail.js"></script>
 <script src="/viewer/js/56_start.js"></script>
 <script src="/viewer/js/57_status.js"></script>
+<script src="/viewer/js/58_answer.js"></script>
 <script src="/viewer/js/90_boot.js"></script>
 </body>
 </html>

@@ -900,10 +900,15 @@ function railRenderSort(tab){
 function railRenderCount(tab){
   const R = RAIL[tab];
   const box = byId(RAILDEF[tab].countId);
-  if (!R.resp) { box.replaceChildren(); box.classList.remove('brwide'); return; }
+  if (!R.resp) { box.replaceChildren(); box.classList.remove('brwide'); byId(RAILDEF[tab].modeId).textContent=''; return; }
   const note = R.kind === 'endpoint' ? railOutboundNote(tab) : null;
   const guessed = R.kind === 'endpoint' ? railGuessedNote() : null;
   box.classList.toggle('brwide', !!(note || guessed));
+  // THE MODE THE ROW COUNTS WERE WALKED IN (RM67-U2e). Trace answers in the mode
+  // on its control, so "API 124" here and "186 APIs" over a heuristic picture
+  // are two walks, and each says which.
+  const census=R.resp.answer.census, mode=byId(RAILDEF[tab].modeId);
+  if(mode) mode.textContent=(census && R.kind!=='symbol') ? t('rail.count.mode', { mode:census.mode }) : '';
   setKids(box, t('rail.count', { n:R.shown.length, m:R.resp.answer.total }),
     note ? el('span', { className:'brout', textContent:note }) : null,
     guessed ? el('span', { className:'brout brwarn', textContent:guessed }) : null);
@@ -1010,9 +1015,10 @@ function railRowNodes(tab, kind, row, kids, child){
         ? el('span', { className:'brid psplit' }, pathLabel(railLabel(kind, row)))
         : el('span', { className:'brid psplit' },
           nameSplit((child && kind === 'column') ? id.slice(String(row.table || '').length + 1) : railLabel(kind, row))),
-      el('span', { className:'brstats' }, railStats(kind, row)),
     ]),
-    railSub(kind, row),
+    // THE NUMBERS ON THEIR OWN LINE (RM67-U2e), spelled out, so the name has the
+    // whole width and keeps the tail that tells two rows apart.
+    el('div', { className:'brmeta' }, [ el('span', { className:'brstats' }, railStats(kind, row)), railSub(kind, row) ]),
   ]);
   btn.setAttribute('role', 'option');
   btn.setAttribute('aria-selected', picked ? 'true' : 'false');
@@ -1032,12 +1038,13 @@ function railRowNodes(tab, kind, row, kids, child){
   kids.push(btn);
   R.rowEls.push({ el:btn, row, kind });
 }
-/** A stat chip: a LABEL, the number, and a title saying what it counts.
-    The rows used to read `◆ 22 ▶ 29` — two glyphs and two numbers, which is a
-    legend the reader does not have and cannot guess. They now read `sql 22`
-    and `api 29`. The labels are the ENGINE's own nouns and are the same in
-    every language: translating `sql` would be inventing a word for a thing the
-    engine already named. The sentence is still in the chip's title. */
+/**
+ * A stat chip: a WORD, the number, and a title saying what it counts. The rows
+ * used to read `◆ 22 ▶ 29`, then `r7 w8 api22 scr12`: a legend the reader does
+ * not have. Since RM67-U2e they read `reads 7  writes 8  API 22  screens 12` in
+ * the reader's language, on a line of their own under the name, and the
+ * sentence is still in the chip's title.
+ */
 function railStat(label, n, key, cls){
   return el('span', { className:'brstat' + (cls ? ' ' + cls : ''), title:t(key) },
     [el('i', { className:'brlbl', textContent:label }), String(n)]);
@@ -1050,30 +1057,30 @@ function railStats(kind, row){
   // frontend the field is absent, and a `scr 0` there would read as "no screen
   // touches this table" when the truth is that no frontend was analyzed.
   if (kind === 'table') return [
-    railStat('sql', row.statementsRead + row.statementsWrite, 'rail.stat.statements.title'),
-    railStat('api', row.endpoints, 'rail.stat.endpoints.title'),
-    row.screens != null ? railStat('scr', row.screens, 'rail.stat.screens.title') : null,
+    railStat(t('rail.stat.sql'), row.statementsRead + row.statementsWrite, 'rail.stat.statements.title'),
+    railStat(t('rail.stat.api'), row.endpoints, 'rail.stat.endpoints.title'),
+    row.screens != null ? railStat(t('rail.stat.scr'), row.screens, 'rail.stat.screens.title') : null,
   ].filter(Boolean);
   if (kind === 'column') return [
     row.pk ? railFlag('pk', t('rail.stat.pk.title')) : null,
-    railStat('r', row.reads, 'rail.stat.reads.title', 'read'),
-    railStat('w', row.writes, 'rail.stat.writes.title', 'write'),
-    railStat('api', row.endpoints, 'rail.stat.endpoints.title'),
-    row.screens != null ? railStat('scr', row.screens, 'rail.stat.screens.title') : null,
+    railStat(t('rail.stat.r'), row.reads, 'rail.stat.reads.title', 'read'),
+    railStat(t('rail.stat.w'), row.writes, 'rail.stat.writes.title', 'write'),
+    railStat(t('rail.stat.api'), row.endpoints, 'rail.stat.endpoints.title'),
+    row.screens != null ? railStat(t('rail.stat.scr'), row.screens, 'rail.stat.screens.title') : null,
   ].filter(Boolean);
   if (kind === 'screen') return [
     // A PAGE, not a router screen (RM48): a reader scanning the list has to be
     // able to tell the two apart without opening either.
     row.kind === 'page' ? railFlag(t('screen.kind.page'), t('screen.kind.page.title')) : null,
     row.observed ? railFlag(t('rail.stat.seen'), t('rail.stat.seen.title')) : null,
-    railStat('api', row.endpoints, 'rail.stat.screenapi.title'),
-    railStat('tbl', row.tables, 'rail.stat.screentables.title'),
+    railStat(t('rail.stat.api'), row.endpoints, 'rail.stat.screenapi.title'),
+    railStat(t('rail.stat.tbl'), row.tables, 'rail.stat.screentables.title'),
   ].filter(Boolean);
   if (kind === 'statement') return [
     row.hasStringSubst ? railFlag('${}', t('rail.stat.subst.title')) : null,
     row.hasUnresolved ? railFlag('?', t('rail.stat.unresolved.title')) : null,
-    railStat('tbl', row.tables, 'rail.stat.tables.title'),
-    railStat('api', row.endpoints, 'rail.stat.endpoints.title'),
+    railStat(t('rail.stat.tbl'), row.tables, 'rail.stat.tables.title'),
+    railStat(t('rail.stat.api'), row.endpoints, 'rail.stat.endpoints.title'),
   ].filter(Boolean);
   if (kind === 'endpoint') return [
     // A route whose own address is a guess says so on its row (RM67), where
@@ -1082,8 +1089,8 @@ function railStats(kind, row){
     (row.grade && row.grade !== 'EXACT' && row.grade !== 'SOUND_SET' && !railGuessedMostly())
       ? el('span', { className:'brgrade', title:t('rail.stat.grade.title') }, [badge(row.grade)]) : null,
     row.handlers > 1 ? railFlag('x' + row.handlers, t('rail.stat.handlers.title')) : null,
-    railStat('sql', row.statements, 'rail.stat.statements.title'),
-    railStat('tbl', row.tables, 'rail.stat.tables.title'),
+    railStat(t('rail.stat.sql'), row.statements, 'rail.stat.statements.title'),
+    railStat(t('rail.stat.tbl'), row.tables, 'rail.stat.tables.title'),
   ].filter(Boolean);
   return [
     row.transactional ? railFlag('tx', t('ov.code.tx.title')) : null,
@@ -1125,11 +1132,16 @@ function railGrouped(tab){
 /** Re-mark the picked row without re-rendering the list under the reader. */
 function railMarkSel(tab){
   const R = RAIL[tab];
+  let picked = null;
   for (const x of R.rowEls) {
     const on = R.sel === railId(x.kind, x.row) && R.selKind === x.kind;
     x.el.classList.toggle('on', on);
     x.el.setAttribute('aria-selected', on ? 'true' : 'false');
+    if (on) picked = x.el;
   }
+  // The target the page is asking about is in view in its list, whichever way
+  // it was picked (RM67-U2e: a column picked on Start left the list at its top).
+  if (picked && picked.scrollIntoView) picked.scrollIntoView({ block:'nearest' });
 }
 
 // ---- the keyboard -----------------------------------------------------------
