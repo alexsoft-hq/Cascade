@@ -128,7 +128,7 @@
           <span class="count">1</span>
         </span>
       </div>
-      <div class="erdgrid">
+      <div id="erdgrid" class="erdgrid" style="--erdw: 460px">
         <div>
           <div id="erdwrap" class="sheetgrid">
             <div id="erdcanvas" __tipbound="true"></div>
@@ -173,23 +173,31 @@
             </div>
           </div>
         </div>
-        <div id="erdside">
-          <div class="panel">
-            <h2>whole-schema map</h2>
-            <div class="fold">
-              <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
-                <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
-                  <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
-                </svg>
-                <span class="foldtext">
-                  3 tables, 0 relationships.
-                </span>
-              </button>
-              <div class="foldbody"></div>
-            </div>
-            <div class="comment" style="margin-top: 6px">3 of them join to nothing in the SQL. They are in the strip under the map.</div>
+        <aside id="erdinspector" class="erdinspector">
+          <button id="erdgrab" class="erdgrab" aria-controls="erdinspector" aria-label="Resize table details. Drag left to widen; use arrow keys, Home to reset, or End to widen fully." aria-orientation="vertical" aria-valuemax="520" aria-valuemin="360" aria-valuenow="460" data-t-title="erd.inspector.resize" role="separator" tabindex="0" title="Resize table details. Drag left to widen; use arrow keys, Home to reset, or End to widen fully."></button>
+          <div class="erdinspecthead">
+            <span data-t="erd.inspector.title">Table details</span>
+            <button id="erdwiden" aria-pressed="false" data-t="erd.inspector.widen" onclick>Widen</button>
+            <button id="erdwidthreset" data-t="erd.inspector.reset" onclick>Reset width</button>
           </div>
-        </div>
+          <div id="erdside">
+            <div class="panel">
+              <h2>whole-schema map</h2>
+              <div class="fold">
+                <button class="foldlead" aria-expanded="false" aria-label="show the full text" onclick type="button">
+                  <svg class="foldchev" aria-hidden="true" focusable="false" height="8" viewBox="0 0 8 8" width="8">
+                    <path d="M2.5 1 L6 4 L2.5 7" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="1.4"></path>
+                  </svg>
+                  <span class="foldtext">
+                    3 tables, 0 relationships.
+                  </span>
+                </button>
+                <div class="foldbody"></div>
+              </div>
+              <div class="comment" style="margin-top: 6px">3 of them join to nothing in the SQL. They are in the strip under the map.</div>
+            </div>
+          </div>
+        </aside>
       </div>
       <div id="ehonesty">
         <div class="rail">
