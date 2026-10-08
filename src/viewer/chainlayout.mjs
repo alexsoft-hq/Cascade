@@ -407,7 +407,7 @@ export function foldLane(rows, opts = {}) {
   const one = (r) => ({ type: 'row', key: r.key, group: r.group, rows: [r] });
   if (rows.length <= over) return foldResult(rows.map(one));
   const items = [];
-  for (let i = 0, j = 0; i < rows.length; i = j) {
+  for (let i = 0, j; i < rows.length; i = j) {
     for (j = i + 1; j < rows.length && rows[j].group === rows[i].group;) j += 1;
     const run = rows.slice(i, j);
     const mates = new Map();

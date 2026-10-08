@@ -36,7 +36,7 @@ function snakeVariantErrors(v, i) {
   if (!Array.isArray(v.steps) || v.steps.length === 0) return [...errors, `${where}.steps must list [pattern, replacement] pairs`];
   v.steps.forEach((st, j) => {
     if (!Array.isArray(st) || st.length !== 2 || !st.every((x) => typeof x === 'string')) { errors.push(`${where}.steps[${j}] must be [pattern, replacement]`); return; }
-    try { new RegExp(st[0], 'g'); } catch (e) { errors.push(`${where}.steps[${j}] is not a pattern this engine can compile: ${e.message}`); }
+    try { void new RegExp(st[0], 'g'); } catch (e) { errors.push(`${where}.steps[${j}] is not a pattern this engine can compile: ${e.message}`); }
   });
   return errors;
 }

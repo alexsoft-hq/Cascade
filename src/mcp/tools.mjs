@@ -1908,7 +1908,7 @@ let entry;
 let start;
 // Set when a route names more than one handler: said in `limits` below, next
 // to everything else this picture did not look at.
-let handlerNote = null;
+const handlerNote = null;
 // Set when a table/column argument was resolved through the pack's identifier
 // rule rather than matched literally (see schemaArg).
 let entryLimits = [];

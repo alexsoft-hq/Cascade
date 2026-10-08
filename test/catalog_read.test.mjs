@@ -92,6 +92,7 @@ test('a catalog whose header carries no list said nothing this run can see, whic
 test('a sentence the reader wrote for a terminal is carried plain: no escape codes, no line breaks, cut to a line', () => {
   const s = catalogReadStats([header(sqlServerRead())]);
   const parse = s.codes.find((c) => c.code === 'parse_error').examples[0];
+  // eslint-disable-next-line no-control-regex -- Verify terminal control characters were removed.
   assert.equal(/[\u0000-\u001f]/.test(parse), false, parse);
   assert.match(parse, /DROP TABLE IF EXISTS dual GO$/);
   assert.equal(plainSentence('x'.repeat(1000)).length, 300);

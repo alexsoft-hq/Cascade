@@ -99,7 +99,7 @@ function registerJoin(st, s, ctx, role) {
   const a = role === 'join-map' ? s.args.slice(1) : s.args;
   const target = strArg(a[0]);
   const alias = strArg(a[1]);
-  let view = null;
+  let view;
   const path = target && /^\w+\.\w+$/.test(target) ? target.split('.') : null;
   if (path && st.aliases.has(path[0])) {
     const rel = ctx.relationOf(st.aliases.get(path[0]), path[1]);

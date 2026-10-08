@@ -41,7 +41,6 @@ const babel = createRequire(import.meta.url)('../adapters/web/vendor/babel-parse
 // caller hands `multiListAnswer`, or the table the entry reads its order from
 // (`FLOW_ORDER[field]`). Anything else FAILS the scan, so a new way of building
 // an entry is taught here instead of being missed.
-const SCAN_DIRS = ['src/mcp', 'src/core'];
 function engineFiles(dir, acc = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);

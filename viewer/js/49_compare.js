@@ -49,7 +49,7 @@ function renderCompareChrome(){
   sel.replaceChildren(...builds.map(compareOption));
   // The choice a reader made stays; otherwise the newest earlier build is the one shown.
   sel.value = builds.some((b)=>b.id===was) ? was : (builds[0] ? builds[0].id : '');
-  compareWhenReady(sel);
+  compareWhenReady();
 }
 /** One earlier build as a choice: its commit, when it was built, and whether it held uncommitted edits. */
 function compareOption(b){
@@ -63,7 +63,7 @@ function compareOption(b){
  * on a language switch): the report from its answer, a refusal from its error,
  * a comparison still on its way as the wait it is. Nothing is asked of the server.
  */
-function compareWhenReady(sel){
+function compareWhenReady(){
   if(CMP.resp){ renderCompare(); return; }
   if(CMP.error){ byId('cmpview').replaceChildren(compareError(CMP.error)); return; }
   if(CMP.pending){ byId('cmpview').replaceChildren(el('div',{className:'empty',textContent:t('compare.loading')})); return; }

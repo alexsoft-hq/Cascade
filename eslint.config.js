@@ -30,12 +30,14 @@ export default [
     //   node_modules            not ours
     //   adapters/web/vendor     the vendored Babel parser, verbatim upstream
     //   viewer/vendor           the vendored force-graph builds, minified
-    //   .oss-work / .java-build / .venv  scratch and build output, not source
+    //   .oss-work / .claude / .analyze-* / .java-build / .venv  scratch and build output, not source
     ignores: [
       'node_modules/**',
       'adapters/web/vendor/**',
       'viewer/vendor/**',
       '.oss-work/**',
+      '.claude/**',
+      '.analyze-*/**',
       '.java-build/**',
       '.venv/**',
       // ANALYSIS INPUT, not source. These trees are what the web lane READS: an
