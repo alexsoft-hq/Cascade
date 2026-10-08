@@ -275,6 +275,43 @@ test('the screens ranking follows the map\'s mode too: one browse kind=screen pe
   assert.equal(panel().querySelector('.hubmode').textContent, 'heuristic 모드 기준');
 });
 
+test('a late screen ranking from the previous project cannot erase the current project lookup', async (t) => {
+  const { html, base } = await startViewer(t, ['delta', 'gamma']);
+  const pending = [];
+  const answer = async (url, opts) => {
+    const body = opts?.body ? JSON.parse(opts.body) : null;
+    // Give both projects the screen-bearing fixture while keeping the page's
+    // real project switching and API generation checks in charge of requests.
+    const sent = body ? { ...opts, body: JSON.stringify({ ...body, project: 'delta' }) } : opts;
+    const res = await fetch(base + url, sent);
+    if (body?.name !== 'browse' || body.arguments.kind !== 'screen' || body.arguments.mode !== 'heuristic') return res;
+    return new Promise((resolve) => pending.push({ project: body.project, release: () => resolve(res) }));
+  };
+  const { ctx, byId } = await bootPage({ html, hash: '#p=delta&tab=start', origin: base, answer });
+  await settle(ctx, 20);
+  ev(ctx, "startSetMode('heuristic')");
+  await settle(ctx, 12);
+  assert.deepEqual(pending.map((p) => p.project), ['delta']);
+  ev(ctx, "switchProject('gamma')");
+  await settle(ctx, 20);
+  ev(ctx, "startSetMode('heuristic')");
+  await settle(ctx, 12);
+  assert.deepEqual(pending.map((p) => p.project), ['delta', 'gamma']);
+  assert.equal(ev(ctx, "START.screens.get('heuristic')"), null);
+  pending[0].release();
+  await settle(ctx, 8);
+  assert.equal(ev(ctx, "START.screens.get('heuristic')"), null, 'the stale rejection must preserve the current pending entry');
+  pending[1].release();
+  await settle(ctx, 12);
+  assert.equal(ev(ctx, "START.screens.get('heuristic').answer.census.mode"), 'heuristic');
+  const panel = byId.get('shubs').querySelectorAll('.panel').find((p) => /Screens, by how many tables they reach/.test(p.textContent));
+  assert.equal(panel.querySelector('.hubmode').textContent, 'counted in heuristic');
+  assert.match(panel.textContent, /\/rows/);
+  ev(ctx, "startSetMode('conservative'); startSetMode('heuristic')");
+  await settle(ctx, 12);
+  assert.equal(pending.length, 2, 'returning to a cached mode does not ask for another ranking');
+});
+
 test('Trace\'s list is counted in the mode on Trace\'s control, asked again when it moves, with the pick kept (RM67-U2i)', async (t) => {
   const { ctx, byId, asked } = await boot(t);
   const lists = () => asked.filter((a) => a.name === 'browse').map((a) => [a.args.kind, a.args.table ?? null, a.args.mode]);

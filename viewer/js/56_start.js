@@ -150,11 +150,12 @@ async function startSetMode(mode){
  */
 async function startAskScreens(mode){
   if(!START.mode || SNAP || !OV.resp.answer.screens || START.screens.has(mode)) return;
+  const mine=STATE.seq, project=STATE.project;
   START.screens.set(mode, null);
   let b;
   try{ b=await api('browse', { kind:'screen', sort:'tables', limit:OV_HUB_TOP, mode }); }
-  catch(e){ START.screens.delete(mode); return; }
-  if(START.screens.get(mode)!==null) return;   // the project was left while it was on its way
+  catch(e){ if(mine===STATE.seq && project===STATE.project) START.screens.delete(mode); return; }
+  if(mine!==STATE.seq || project!==STATE.project || START.screens.get(mode)!==null) return;
   START.screens.set(mode, b);
   if(START.mode===mode) renderStartNumbers();
 }
