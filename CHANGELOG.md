@@ -780,6 +780,13 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Fixed
 
+- **The TypeScript worker starts on Windows and in encoded installation paths.**
+  The CLI entry check now converts its file URL to a native path instead of
+  comparing a URL pathname, which silently skipped the worker on Windows and
+  under paths containing spaces or special characters. Browse/remedy tests use
+  portable paths, and the unreadable-directory test injects a permission error
+  consistently across operating systems.
+
 - **An uncommitted edit's impact reaches the persistence layer the pack does.**
   `cascade impact` answers from an overlay: the pack's facts with the edited
   files re-read. The overlay assembled its graph without the JPA and

@@ -19,6 +19,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Graph, sqlEdgesOf } from '../src/core/graph.mjs';
 import { walkEndpoints, walkScreens } from '../src/core/walks.mjs';
 import { walkAgreement } from '../src/core/walk_agreement.mjs';
@@ -27,7 +28,7 @@ import { assertContract } from '../src/mcp/contract.mjs';
 import { skipUnlessMall, mallGraph } from './helpers/mall_fixture.mjs';
 import { browseCensusDiff } from './helpers/browse_census.mjs';
 
-const RECORDED = path.join(path.dirname(new URL(import.meta.url).pathname), 'fixtures', 'golden-browse', 'no-mode.json');
+const RECORDED = fileURLToPath(new URL('./fixtures/golden-browse/no-mode.json', import.meta.url));
 const RECORD = process.env.CASCADE_RECORD_GOLDEN === '1';
 const MODES = ['strict', 'conservative', 'heuristic'];
 const KINDS = ['table', 'column', 'statement', 'endpoint', 'screen'];

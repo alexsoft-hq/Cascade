@@ -387,16 +387,20 @@ test('sourceFiles skips a directory it cannot read, instead of throwing', (t) =>
   const locked = path.join(root, 'locked');
   fs.mkdirSync(locked);
   fs.writeFileSync(path.join(locked, 'hidden.ts'), 'export const y = 1;');
-  const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
-  if (isRoot) { t.skip('running as root: permission bits do not restrict access'); return; }
-  fs.chmodSync(locked, 0o000);
-  try {
-    assert.doesNotThrow(() => sourceFiles([root]));
-    const files = sourceFiles([root]).map((f) => path.relative(root, f).split(path.sep).join('/'));
-    assert.deepEqual(files, ['a.ts'], 'the unreadable directory contributed nothing, and nothing else broke');
-  } finally {
-    fs.chmodSync(locked, 0o755);
-  }
+  // Permission bits do not deny reads on Windows or when running as root.
+  const readdirSync = fs.readdirSync;
+  let deniedReads = 0;
+  t.mock.method(fs, 'readdirSync', (target, ...args) => {
+    if (target === locked) {
+      deniedReads++;
+      throw Object.assign(new Error('permission denied'), { code: 'EACCES', path: target, syscall: 'scandir' });
+    }
+    return readdirSync(target, ...args);
+  });
+  let files;
+  assert.doesNotThrow(() => { files = sourceFiles([root]); });
+  assert.equal(deniedReads, 1, 'the unreadable directory was attempted');
+  assert.deepEqual(files.map((f) => path.relative(root, f).split(path.sep).join('/')), ['a.ts'], 'the unreadable directory contributed nothing, and nothing else broke');
 });
 
 test('every file read says so first, even one of constants alone, so the bridge never takes it for a package', () => {
@@ -439,4 +443,3 @@ test('a property holding a function, the class a mixin function returns, a class
   const aliases = records.filter((r) => r.kind === 'alias');
   assert.deepEqual(aliases.map((r) => [r.name, r.values.map((v) => v.v)]), [['chosen', ['DocumentModule', 'RelationalModule']]], 'a call is no alias');
 });
-

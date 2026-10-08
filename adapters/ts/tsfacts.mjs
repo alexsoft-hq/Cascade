@@ -31,6 +31,7 @@ import { staticValue, staticFacts } from './tsstatic.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { calleeOf, eachChild, isFunctionNode, keyName, toPosix } from '../web/lib/ast.mjs';
 import { readScopes } from './tsscope.mjs';
 import { useRecords } from './tsuses.mjs';
@@ -926,4 +927,4 @@ function main(argv) {
   write({ kind: 'summary', version: VERSION, files: files.length, parseErrors });
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname)) main(process.argv.slice(2));
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main(process.argv.slice(2));

@@ -15,6 +15,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Graph } from '../src/core/graph.mjs';
 import { callTool } from '../src/mcp/catalog.mjs';
 import { buildOverview } from '../src/core/overview.mjs';
@@ -25,7 +26,7 @@ import {
   axisRemedies, diagnosticRemedy, gapRemedy, routeRemedy,
 } from '../src/core/remedies.mjs';
 
-const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 
 /** Every engine source file, read once: the kinds a table names must be kinds the engine emits. */
 function engineSources() {
@@ -34,7 +35,7 @@ function engineSources() {
     for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
       const p = path.join(dir, e.name);
       if (e.isDirectory()) walk(p);
-      else if (e.name.endsWith('.mjs')) out.push({ file: path.relative(ROOT, p), text: fs.readFileSync(p, 'utf8') });
+      else if (e.name.endsWith('.mjs')) out.push({ file: path.relative(ROOT, p).split(path.sep).join('/'), text: fs.readFileSync(p, 'utf8') });
     }
   };
   walk(path.join(ROOT, 'src'));
