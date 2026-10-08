@@ -708,8 +708,17 @@ the five largest families each take a tint (a kind hue pulled towards the
 sheet) and the rest stay ink; the legend lists every family with its count and
 a swatch where it has a tint. The light theme stays ink. Tables no SQL
 joins to anything sit in a strip under the map, named as such rather than
-dropped. A table opens its Details on Trace, and its card has a way to walk it
-up.
+dropped. Selecting a table opens its inspector beside the drawing; its actions
+open Details on Trace or follow the table up to its callers.
+
+The inspector's left edge is a width control. Drag it, or focus it and use the
+arrow keys; **Widen** gives the details more room and **Reset width** restores
+the default. The preferred width is remembered in this browser. Columns occupy
+one row each, with separate name, type and comment fields. Names and types do
+not break into fragments; a long row scrolls horizontally. Search filters all
+three fields without asking the server again. Relationship evidence can be
+expanded above the columns. Resizing keeps the selected table and graph layout.
+On a narrow screen the inspector uses the full width below the drawing.
 
 **A connected project is its own framed cluster**, off to the right, holding
 only the tables a request from here reaches and only that project's own joins

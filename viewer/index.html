@@ -1363,10 +1363,55 @@
   .gover .gmapleg, .gover .klegend, .gover .gcount { font-size:12px; gap:8px; line-height:1.5; }
   .gover .gcount b, .gover .gcount .count { font-size:12px; }
   .gover button.chip { pointer-events:auto; }
-  .erdgrid { display:grid; grid-template-columns:minmax(0,1fr) 320px; gap:18px; align-items:start; }
-  @media (max-width:1100px){ .erdgrid{ grid-template-columns:minmax(0,1fr); } }
+  .erdgrid { display:grid; grid-template-columns:minmax(0,1fr) var(--erdw,460px); gap:18px; align-items:start; }
+  .erdgrid > * { min-width:0; }
   #erdwrap { height:78vh; min-height:540px; overflow:hidden; border:1px solid var(--frame); position:relative; }
-  #erdside { max-height:78vh; overflow:auto; }
+  .erdinspector { position:relative; display:flex; flex-direction:column; height:78vh; min-height:420px;
+    border:1px solid var(--frame); border-radius:var(--r-panel); background:var(--g1); }
+  .erdinspecthead { display:flex; align-items:center; flex-wrap:wrap; gap:8px; flex:none;
+    min-height:44px; padding:9px 14px; border-bottom:1px solid var(--frame); }
+  .erdinspecthead > span { flex:1; font-weight:600; font-size:12px; }
+  .erdinspecthead button { font-size:11px; padding:3px 8px; }
+  .erdgrab { position:absolute; left:-13px; top:0; bottom:0; width:12px; padding:0; border:0;
+    border-radius:3px; background:none; cursor:col-resize; touch-action:none; z-index:4; }
+  .erdgrab::after { content:""; position:absolute; left:5px; top:calc(50% - 22px);
+    width:2px; height:44px; background:var(--t3); border-radius:2px; }
+  .erdgrab:hover, .erdgrab.on { background:var(--hair); }
+  .erdgrab:focus-visible { outline:2px solid var(--k-endpoint); outline-offset:1px; }
+  #erdside { flex:1; min-height:0; overflow:auto; padding:0 16px; scrollbar-gutter:stable; }
+  #erdside .panel { margin:0; padding:16px 0; border:0; border-bottom:1px solid var(--hair);
+    border-radius:0; background:none; box-shadow:none; }
+  #erdside .panel:last-child { border-bottom:0; }
+  #erdside .srchead { align-items:flex-start; }
+  #erdside .srchead .id, #erdside .list .id { word-break:normal; overflow-wrap:anywhere; }
+  #erdside .srchead button { flex:none; }
+  .erdcolfilter { display:block; width:100%; margin-top:10px; padding:8px 10px; font:12px var(--sans);
+    color:var(--t1); background:var(--g2); border:1px solid var(--frame); border-radius:4px; }
+  .erdcolfilter::placeholder { color:var(--t3); }
+  .erdcolfilter:focus-visible { outline:2px solid var(--k-endpoint); outline-offset:1px; }
+  .erdrelations { margin-top:12px; }
+  .erdrelations > summary { padding:6px 0; cursor:pointer; font-size:12px; font-weight:500; color:var(--t2); }
+  .erdrelations > summary:hover { color:var(--t1); }
+  .erdcolcount { margin:8px 0 4px; font-size:11px; color:var(--t3); }
+  .erdcolscroll { overflow-x:auto; overscroll-behavior-inline:contain; }
+  .erdcolumns { width:100%; min-width:400px; border-collapse:collapse; text-align:left; font-size:12px; }
+  .erdcolumns th { padding:8px 10px 8px 0; font-size:11px; font-weight:500; color:var(--t3);
+    border-bottom:1px solid var(--frame); white-space:nowrap; }
+  .erdcolumns td { padding:9px 10px 9px 0; border-bottom:1px solid var(--hair); vertical-align:top; line-height:1.6; }
+  .erdcolumns tr:last-child td { border-bottom:0; }
+  .erdcolumns .erdcolname { font-family:var(--mono); font-weight:500; color:var(--t1); }
+  .erdcolumns .erdcoltype { font-family:var(--mono); font-size:11px; color:var(--t2); }
+  .erdcolumns .erdcolname, .erdcolumns .erdcolname .id, .erdcolumns .erdcoltype {
+    white-space:nowrap; word-break:normal; overflow-wrap:normal; }
+  .erdcolumns .erdcolcomment { min-width:110px; color:var(--t2); overflow-wrap:anywhere; }
+  .erdcolumns tbody tr:hover { background:var(--hair); }
+  .erdcolempty { padding:18px 0; font-size:12px; color:var(--t3); }
+  @media (max-width:999px){
+    .erdgrid { grid-template-columns:minmax(0,1fr); }
+    .erdinspector { height:auto; min-height:0; }
+    #erdside { max-height:60vh; }
+    .erdgrab, #erdwiden, #erdwidthreset { display:none; }
+  }
   #gmapwrap { position:absolute; inset:0; }
   #gmaplabels { position:absolute; inset:0; overflow:hidden; pointer-events:none; z-index:2; }
   .gmaplbl { position:absolute; white-space:nowrap; font:11px var(--mono); color:var(--t1);
@@ -1394,9 +1439,6 @@
   .pk { color:var(--join); }
   .card { font:500 10px var(--mono); padding:1px 5px; border-radius:2px; color:var(--join);
     border:1px solid var(--join); }
-  /* Over 12 columns a single list runs off the bottom of the rail. */
-  .colgrid2 { columns:2; column-gap:16px; }
-  .colgrid2 li { break-inside:avoid; }
   /* The pictures' tooltip. A native title takes about a second to appear — too
      slow for a picture you read by sweeping the pointer over it. */
   #gtip { position:fixed; z-index:60; display:none; pointer-events:none; max-width:340px;
@@ -1707,12 +1749,21 @@
     </div>
     <div class="hint" data-t-fold="hint.erd"></div>
     <div class="famleg" id="erdleg"></div>
-    <div class="erdgrid">
+    <div class="erdgrid" id="erdgrid">
       <div>
         <div id="erdwrap" class="sheetgrid"><div id="erdcanvas"></div></div>
         <div id="erdiso"></div>
       </div>
-      <div id="erdside"></div>
+      <aside class="erdinspector" id="erdinspector">
+        <button class="erdgrab" id="erdgrab" role="separator" tabindex="0" aria-orientation="vertical"
+          aria-controls="erdinspector" data-t-title="erd.inspector.resize" title="Drag to resize table details"></button>
+        <div class="erdinspecthead">
+          <span data-t="erd.inspector.title">Table details</span>
+          <button id="erdwiden" data-t="erd.inspector.widen" aria-pressed="false">Widen</button>
+          <button id="erdwidthreset" data-t="erd.inspector.reset">Reset width</button>
+        </div>
+        <div id="erdside"></div>
+      </aside>
     </div>
     <div id="ehonesty"></div>
   </div>

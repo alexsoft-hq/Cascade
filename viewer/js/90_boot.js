@@ -36,6 +36,7 @@ document.getElementById('ereset').onclick = ()=>{ document.getElementById('etabl
 document.getElementById('etable').addEventListener('keydown', e=>{ if(e.key==='Enter'){ const q=e.target.value.trim(); if(q && erdSelectFn) erdSelectFn(q); else if(erdClearFn) erdClearFn(); } });
 railWire();
 srcWire();
+erdInspectorWire();
 rulesWire();
 // The Show all buttons, and the page's one Escape rule. The pane's own
 // keys (j / k / arrows to scroll a line, f for the whole file) ride the same
@@ -128,8 +129,7 @@ window.addEventListener('resize', ()=>{ clearTimeout(chainResizeTimer); chainRes
   if(GA.api){ try{ GA.api.width(gw.clientWidth||900).height(gw.clientHeight||620); }catch(e){ /* the renderer is gone or not mounted yet: there is nothing to undo */ } }
   if(GMAP.api){ const mw=mapWrapEl();
     try{ GMAP.api.width(mw.clientWidth||900).height(mw.clientHeight||420); }catch(e){ /* the renderer is gone or not mounted yet: there is nothing to undo */ } }
-  if(ERD.api){ const w=byId('erdwrap');
-    try{ ERD.api.width(w.clientWidth||900).height(w.clientHeight||620); }catch(e){ /* the renderer is gone or not mounted yet: there is nothing to undo */ } }
+  erdInspectorApply();
 },120); });
 // Scrolling changes WHICH connectors the reader can see, and only those may
 // move. Throttled, and never a re-measure of the beziers - only the dots.

@@ -9,6 +9,99 @@
 
 // ---------- ERD tab — one whole-schema graph; click to spotlight (Obsidian-style) ----------
 let erdData=null, erdSelectFn=null, erdClearFn=null, erdResetFn=null;
+const ERD_INSPECTOR_KEY='cascade.viewer.erdw';
+const ERD_INSPECTOR={ preferred:460, width:460, wide:false, drag:null, wired:false, frame:null };
+const ERD_INSPECTOR_MIN=360, ERD_INSPECTOR_MAX=900, ERD_INSPECTOR_DEFAULT=460;
+/** The inspector leaves a usable canvas beside it; stacked layouts retain the preference. */
+function erdInspectorBounds(){
+  const desktop=window.innerWidth>=1000;
+  const grid=byId('erdgrid');
+  const width=grid?.clientWidth || window.innerWidth;
+  return { desktop, min:ERD_INSPECTOR_MIN,
+    max:desktop ? Math.max(ERD_INSPECTOR_MIN, Math.min(ERD_INSPECTOR_MAX, width-380)) : ERD_INSPECTOR_MAX };
+}
+/** Resize the existing renderer without recreating its layout, selection or camera. */
+function erdResize(){
+  const wrap=byId('erdwrap');
+  if(!wrap || !ERD.api) return;
+  ERD.W=wrap.clientWidth||900; ERD.H=wrap.clientHeight||620;
+  try{ ERD.api.width(ERD.W).height(ERD.H); }
+  catch(e){ /* A renderer being torn down has nothing to resize. */ }
+}
+function erdInspectorLabels(){
+  const grab=byId('erdgrab'), widen=byId('erdwiden'), reset=byId('erdwidthreset');
+  const bounds=erdInspectorBounds();
+  if(grab){
+    grab.title=t('erd.inspector.resize');
+    grab.setAttribute('aria-label', t('erd.inspector.resize'));
+    grab.setAttribute('aria-valuemin', String(bounds.min));
+    grab.setAttribute('aria-valuemax', String(bounds.max));
+    grab.setAttribute('aria-valuenow', String(ERD_INSPECTOR.width));
+  }
+  if(widen){
+    const label=ERD_INSPECTOR.wide ? 'erd.inspector.restore' : 'erd.inspector.widen';
+    widen.textContent=t(label); widen.setAttribute('data-t', label);
+    widen.setAttribute('aria-pressed', String(ERD_INSPECTOR.wide));
+    widen.disabled=!bounds.desktop;
+  }
+  if(reset){ reset.textContent=t('erd.inspector.reset'); reset.setAttribute('data-t', 'erd.inspector.reset'); }
+}
+function erdInspectorApply(){
+  const bounds=erdInspectorBounds();
+  const wanted=ERD_INSPECTOR.wide && bounds.desktop ? bounds.max : ERD_INSPECTOR.preferred;
+  ERD_INSPECTOR.width=Math.max(bounds.min, Math.min(bounds.max, wanted));
+  const value=ERD_INSPECTOR.width+'px';
+  document.documentElement.style.setProperty('--erdw', value);
+  const grid=byId('erdgrid'); if(grid) grid.style.setProperty('--erdw', value);
+  erdInspectorLabels();
+  if(ERD_INSPECTOR.frame!==null) cancelAnimationFrame(ERD_INSPECTOR.frame);
+  ERD_INSPECTOR.frame=requestAnimationFrame(()=>{ ERD_INSPECTOR.frame=null; erdResize(); });
+  return ERD_INSPECTOR.width;
+}
+function erdInspectorSetWidth(value){
+  const bounds=erdInspectorBounds();
+  ERD_INSPECTOR.preferred=Math.max(bounds.min, Math.min(bounds.max, Math.round(Number(value)||ERD_INSPECTOR_DEFAULT)));
+  ERD_INSPECTOR.wide=false;
+  lsSet(ERD_INSPECTOR_KEY, String(ERD_INSPECTOR.preferred));
+  return erdInspectorApply();
+}
+function erdInspectorReset(){
+  ERD_INSPECTOR.preferred=ERD_INSPECTOR_DEFAULT; ERD_INSPECTOR.wide=false;
+  lsSet(ERD_INSPECTOR_KEY, String(ERD_INSPECTOR_DEFAULT));
+  erdInspectorApply();
+}
+function erdInspectorEnd(){
+  ERD_INSPECTOR.drag=null;
+  const grab=byId('erdgrab'); if(grab) grab.classList.remove('on');
+}
+function erdInspectorKey(e){
+  const widths={ ArrowLeft:ERD_INSPECTOR.width+32, ArrowRight:ERD_INSPECTOR.width-32, End:erdInspectorBounds().max };
+  if(e.key==='Home') erdInspectorReset();
+  else if(Object.hasOwn(widths,e.key)) erdInspectorSetWidth(widths[e.key]);
+  else return;
+  if(e.preventDefault) e.preventDefault();
+}
+function erdInspectorWire(){
+  const grab=byId('erdgrab'); if(!grab || ERD_INSPECTOR.wired) return;
+  ERD_INSPECTOR.wired=true;
+  const stored=Number(lsGet(ERD_INSPECTOR_KEY));
+  ERD_INSPECTOR.preferred=Number.isFinite(stored) && stored>0 ? Math.max(ERD_INSPECTOR_MIN,Math.min(ERD_INSPECTOR_MAX,stored)) : ERD_INSPECTOR_DEFAULT;
+  grab.addEventListener('mousedown',(e)=>{
+    if(e.button>0 || !erdInspectorBounds().desktop) return;
+    ERD_INSPECTOR.drag={ x:e.clientX||0, width:ERD_INSPECTOR.width };
+    grab.classList.add('on'); if(e.preventDefault) e.preventDefault();
+  });
+  document.addEventListener('mousemove',(e)=>{
+    const from=ERD_INSPECTOR.drag; if(from) erdInspectorSetWidth(from.width+from.x-(e.clientX||0));
+  });
+  document.addEventListener('mouseup',erdInspectorEnd);
+  window.addEventListener('blur',erdInspectorEnd);
+  grab.addEventListener('keydown',erdInspectorKey);
+  grab.addEventListener('dblclick',erdInspectorReset);
+  byId('erdwiden').onclick=()=>{ ERD_INSPECTOR.wide=!ERD_INSPECTOR.wide; erdInspectorApply(); };
+  byId('erdwidthreset').onclick=erdInspectorReset;
+  erdInspectorApply();
+}
 function openErd(table){
   activateTab('erd'); // auto-loads on first open
   document.getElementById('etable').value = table||'';
@@ -189,9 +282,13 @@ function erdClusterLinks(c, topWitness){
   return out;
 }
 
-function renderErdGraph(a){
+function erdCanvasSize(){
+  erdInspectorApply();
   const wrap=byId('erdwrap');
-  const W=wrap.clientWidth||900, H=wrap.clientHeight||620;
+  return {W:wrap.clientWidth||900,H:wrap.clientHeight||620};
+}
+function renderErdGraph(a){
+  const {W,H}=erdCanvasSize();
   ERD.answer=a; ERD.W=W; ERD.H=H;
   const deg=erdDegrees(a);
   // Grouping by table family, the one rule the map on Start reads names with.
@@ -735,6 +832,7 @@ function hubPanel(a){
         el('span',{className:'count',textContent:d}) ]) ]))) ]);
 }
 function renderErdSideOverview(){
+  erdInspectorLabels();
   refreshShowAll();
   const a=erdData; const side=document.getElementById('erdside'); side.replaceChildren();
   const deg=erdDegrees(a);
@@ -780,6 +878,7 @@ function erdFedPanel(a, fedList){
 }
 
 async function renderErdSideTable(id){
+  erdInspectorLabels();
   const a=erdData; const side=document.getElementById('erdside');
   // A ROUTE MARKER is not a table: its card is the crossing itself.
   const picked=ERD.byId.get(id);
@@ -804,7 +903,7 @@ async function renderErdSideTable(id){
         onclick:()=>openTrace({kind:'table', id}, 'detail')}),
       traceButton('table', id, 'up'),
       el('button',{className:'mini',textContent:'Graph',onclick:()=>openGraph('table:'+id)}) ]),
-    el('h2',{style:'margin-top:12px'},[t('erd.side.rels')+' ',el('span',{className:'count',textContent:t('erd.side.count',{n:rels.length})})]),
+    erdRelations(rels.length,[
     el('ul',{className:'list'}, rels.length? rels.map(r=>el('li',{},[
       el('span',{className:'grow'},[
         kindGlyph('table', 12),
@@ -815,7 +914,7 @@ async function renderErdSideTable(id){
       : [el('li',{className:'empty',textContent:t('erd.side.rels.none')})]),
     // the join columns are the evidence: one line per relationship, under the list
     rels.length? el('div',{className:'comment',style:'margin-top:7px'},
-      rels.map(r=>el('div',{},[ el('span',{className:'id',textContent:r.other}), '\u00a0\u00a0', r.columns.join(', ') ])) ) : null ]);
+      rels.map(r=>el('div',{},[ el('span',{className:'id',textContent:r.other}), '\u00a0\u00a0', r.columns.join(', ') ])) ) : null ]) ]);
   const colPanel=el('div',{className:'panel'},[ el('h2',{textContent:t('erd.side.cols')}), el('div',{className:'comment',textContent:t('erd.side.cols.loading')}) ]);
   side.replaceChildren(relPanel, colPanel);
   // A second click while the first table's columns are still in flight must not
@@ -826,12 +925,11 @@ async function renderErdSideTable(id){
   // page already has (and the engine's own words in it do not change anyway).
   let cols=ERD.cols.get(id);
   if(!cols){
-    try { const rr=await api('erd',{table:id}); const tb=rr.answer.tables.find(x=>x.table===id); cols=(tb&&tb.columns)||[]; } catch(e){ cols=[]; }
+    try { const rr=await api('erd',{table:id}); const tb=rr.answer.tables.find(x=>x.table===id); cols=(tb&&tb.columns)||[]; } catch(e){ if(stale(e)) return; cols=[]; }
     if(mine!==ERD.sideSeq) return;
     ERD.cols.set(id, cols);
   }
-  colPanel.replaceChildren(el('h2',{},[t('erd.side.cols')+' ',el('span',{className:'count',textContent:t('erd.side.count',{n:cols.length})})]),
-    el('ul',{className:'list'+(cols.length>12?' colgrid2':'')}, cols.map(c=>el('li',{},[ el('span',{className:'id'},[ c.pk?el('span',{className:'pk',title:'primary key',textContent:'✦ '}):'', c.column ]), el('span',{className:'comment',textContent:(c.type||'')+(c.comment?'\u00a0\u00a0'+c.comment:'')}) ]))));
+  colPanel.replaceChildren(erdColumnsPanel(cols));
 }
 
 /**
@@ -894,8 +992,7 @@ async function renderErdSideFedTable(n){
       el('button',{className:'mini',textContent:t('map.card.open',{p:n.project}),
         title:t('map.card.open.title',{p:n.project}),
         onclick:()=>{ location.hash = hashFor({ project:n.project, tab:'erd', pick:'table:'+n.table }); }}) ]),
-    el('h2',{style:'margin-top:12px'},[t('erd.side.rels')+' ',
-      el('span',{className:'count',textContent:t('erd.side.count',{n:rels.length})})]),
+    erdRelations(rels.length,[
     el('ul',{className:'list'}, rels.length? rels.map((r)=>el('li',{},[
       el('span',{className:'grow'},[ kindGlyph('table', 12),
         el('a',{className:'id clickable',textContent:r.other,
@@ -910,7 +1007,7 @@ async function renderErdSideFedTable(n){
       el('span',{className:'grow'},[ kindGlyph('endpoint', 12),
         el('a',{className:'id clickable',textContent:v.route.method+' '+v.route.path,
           onclick:()=>erdSelectFn&&erdSelectFn(erdViaId(n.project, v.route.method+' '+v.route.path))}) ]),
-      badge(v.grade) ]))),
+      badge(v.grade) ]))), ]),
   ]);
   const colPanel=el('div',{className:'panel'},[ el('h2',{textContent:t('erd.side.cols')}),
     el('div',{className:'comment',textContent:t('erd.side.cols.loading')}) ]);
@@ -921,14 +1018,60 @@ async function renderErdSideFedTable(n){
   if(!cols){
     try { const rr=await apiFor(n.project, 'erd', {table:n.table});
       const tb=rr.answer.tables.find((x)=>x.table===n.table); cols=(tb&&tb.columns)||[]; }
-    catch(e){ cols=[]; }
+    catch(e){ if(stale(e)) return; cols=[]; }
     if(mine!==ERD.sideSeq) return;
     ERD.cols.set(key, cols);
   }
-  colPanel.replaceChildren(
-    el('h2',{},[t('erd.side.cols')+' ', el('span',{className:'count',textContent:t('erd.side.count',{n:cols.length})})]),
-    el('div',{className:'comment',textContent:t('erd.side.fed.cols',{p:n.project})}),
-    el('ul',{className:'list'+(cols.length>12?' colgrid2':'')}, cols.map((c)=>el('li',{},[
-      el('span',{className:'id'},[ c.pk?el('span',{className:'pk',title:'primary key',textContent:'\u2726 '}):'', c.column ]),
-      el('span',{className:'comment',textContent:(c.type||'')+(c.comment?'\u00a0\u00a0'+c.comment:'')}) ]))));
+  colPanel.replaceChildren(erdColumnsPanel(cols, {project:n.project}));
+}
+
+// Cached column arrays keep their filter through a language redraw, and are
+// released with the project's cache rather than leaking names across projects.
+const ERD_COLUMN_FILTERS=new WeakMap();
+/** Relationship evidence stays available without pushing the columns below the fold. */
+function erdRelations(count, children){
+  return el('details',{className:'erdrelations'},[
+    el('summary',{},[t('erd.side.rels')+' ',el('span',{className:'count',textContent:t('erd.side.count',{n:count})})]),
+    ...children,
+  ]);
+}
+function erdColumnsPanel(cols, {project=null}={}){
+  const input=el('input',{type:'search',className:'erdcolfilter',placeholder:t('erd.cols.filter')});
+  input.setAttribute('aria-label',t('erd.cols.filter'));
+  input.value=ERD_COLUMN_FILTERS.get(cols)||'';
+  const count=el('span',{className:'count erdcolcount'}); count.setAttribute('aria-live','polite');
+  const body=el('tbody');
+  const empty=el('div',{className:'empty erdcolempty'});
+  const table=el('table',{className:'erdcolumns'},[
+    el('thead',{},[el('tr',{},['erd.cols.name','erd.cols.type','erd.cols.comment'].map((key)=>{
+      const th=el('th',{textContent:t(key)}); th.setAttribute('scope','col'); return th;
+    }))]),body,
+  ]);
+  table.setAttribute('aria-label',t('erd.side.cols'));
+  const rows=cols.map((c)=>({
+    text:[c.column,c.type,c.comment].filter(Boolean).join(' ').toLocaleLowerCase(),
+    node:el('tr',{},[
+      el('td',{className:'erdcolname'},[
+        c.pk ? el('span',{className:'pk',title:t('erd.cols.pk'),textContent:'PK '}) : null,
+        el('span',{className:'id',textContent:c.column||''}),
+      ]),
+      el('td',{className:'erdcoltype',textContent:c.type||''}),
+      el('td',{className:'erdcolcomment',textContent:c.comment||''}),
+    ]),
+  }));
+  const draw=()=>{
+    const query=input.value.trim().toLocaleLowerCase();
+    const shown=rows.filter((r)=>r.text.includes(query));
+    body.replaceChildren(...shown.map((r)=>r.node));
+    count.textContent=t('erd.cols.count',{shown:shown.length,total:cols.length});
+    empty.textContent=t(cols.length ? 'erd.cols.empty' : 'erd.cols.none');
+    empty.classList.toggle('hidden',shown.length>0);
+    ERD_COLUMN_FILTERS.set(cols,input.value);
+  };
+  input.oninput=draw; draw();
+  return el('div',{className:'erdcolpanel'},[
+    el('h2',{},[t('erd.side.cols')+' ',count]),
+    project ? el('div',{className:'comment',textContent:t('erd.side.fed.cols',{p:project})}) : null,
+    input,el('div',{className:'erdcolscroll'},[table]),empty,
+  ]);
 }

@@ -12,6 +12,12 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Added
 
+- **Readable, resizable table details.** Table links has a docked inspector
+  with a remembered width, keyboard resizing and a widen control. Columns use
+  searchable name/type/comment rows instead of squeezing two lists into a narrow
+  rail. Long identifiers remain intact, and relationship evidence folds away
+  while reading columns. Local and connected-project tables use the same view.
+
 - **Separate JPA physical and implicit naming declarations.**
   `jpa.implicitNamingStrategy` accepts `spring` and `jpa-compliant`; both Spring
   implicit-naming configuration keys are read with the same factory reach rules
