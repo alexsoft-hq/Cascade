@@ -559,7 +559,7 @@ Java 클라이언트 URL 의 호스트, 또는 게이트웨이 라우트가 넘�
 경로는 프로필이 있는 디렉터리 `.cascade/` 기준입니다. 그래서 저장소 맨 위의 파일은
 `../file` 입니다. `servers` 만 분석한 루트 기준으로 이름을 씁니다. 프로필 digest 를
 처음 기록한 뒤에 생긴 키(`tsBackend`, `pathPrefixes`, `servers`, `tsBackend.typeorm`
-과 그 `type`, `openapi.generatedFromCode`, `openapi.generatesCode`)는 기본값인 동안
+과 그 `type`, `openapi.generatedFromCode`, `openapi.generatesCode`, `jpa.implicitNamingStrategy`)는 기본값인 동안
 digest 에서 빠집니다. 그래서 엔진을 올려도 보정 게이트가 대상이 바뀐 것으로 보지
 않습니다. 검증기는 모양이 틀린 값은 거부하지만, 모르는 키는 거부하지 않습니다.
 그래서 철자가 틀린 키는 아무것도 말하지 않습니다.
@@ -596,7 +596,8 @@ digest 에서 빠집니다. 그래서 엔진을 올려도 보정 게이트가 �
 | `tsBackend.typeorm.entityPrefix` | TypeORM 이 모든 테이블 이름 앞에 붙이는 접두사입니다 | `""` |
 | `tsBackend.typeorm.schema` | 스키마를 적지 않은 엔티티의 스키마입니다 | `"public"` |
 | `tsBackend.typeorm.type` | TypeORM 드라이버입니다. 테이블 이름 앞에 무엇이 붙는지를 드라이버가 정합니다. 통하는 값은 typeorm 팩의 드라이버 이름이고, 다른 값이면 그 이름들은 HEURISTIC 으로 남습니다 | `"postgres"` |
-| `jpa.namingStrategy` | `@Table` 이나 `@Column` 이 없는 JPA 이름이 물리 이름이 되는 규칙입니다. `null` 이면 Spring Boot 기본값을 가정하고 HEURISTIC 으로 매깁니다 | `"spring-snake-case"` |
+| `jpa.namingStrategy` | 명시한 이름과 유도한 이름에 적용하는 JPA 물리 네이밍 규칙. 설정이 팩토리에 전달되는지 판단하고, 적용할 설정이 없으면 팩토리의 기본값을 가정합니다 | `"spring-snake-case"` |
+| `jpa.implicitNamingStrategy` | 기본 조인 테이블 이름 규칙. `spring`은 소유 테이블과 속성, `jpa-compliant`는 두 테이블의 이름을 씁니다. 선언이나 적용 가능한 설정이 없고 두 규칙의 결과가 다르면 HEURISTIC입니다 | `"spring"` |
 | `mybatisPlus.namingStrategy` | `@TableName` 이나 `@TableField` 가 없는 MyBatis-Plus 이름에 대한 같은 규칙입니다 | `"underscore"` |
 | `mybatisPlus.tablePrefix` | MyBatis-Plus 가 유도한 테이블 이름 앞에 붙이는 전역 접두사입니다 | `"tb_"` |
 | `mybatisPlus.logicDeleteValue` | 논리 삭제가 `@TableLogic` 컬럼에 쓰는 값입니다 | `"1"` |

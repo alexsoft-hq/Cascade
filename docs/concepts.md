@@ -585,7 +585,7 @@ test holds that no key is dead (`PROFILE_KEY_CONSUMERS` in
 the one key named from the analyzed root. The keys added after the profile's
 digest was first recorded (`tsBackend`, `pathPrefixes`, `servers`,
 `tsBackend.typeorm` and its `type`, `openapi.generatedFromCode`,
-`openapi.generatesCode`) are left out of that digest while they hold their
+`openapi.generatesCode`, `jpa.implicitNamingStrategy`) are left out of that digest while they hold their
 default, so upgrading does not look like a change of target to the calibration
 gate. The validator refuses a value
 of the wrong shape; it does not refuse a key it does not know, so a misspelt key
@@ -623,7 +623,8 @@ states nothing.
 | `tsBackend.typeorm.entityPrefix` | the prefix TypeORM puts before every table name | `""` |
 | `tsBackend.typeorm.schema` | the schema of every entity that names none | `"public"` |
 | `tsBackend.typeorm.type` | the TypeORM driver, which decides what goes before a table name. The values that work are the typeorm pack's driver names; another leaves those names HEURISTIC | `"postgres"` |
-| `jpa.namingStrategy` | how a JPA name with no `@Table` or `@Column` becomes a physical name. `null` assumes Spring Boot's default and grades HEURISTIC | `"spring-snake-case"` |
+| `jpa.namingStrategy` | The physical naming rule for written and derived JPA names. Usable configuration is weighed against the factory; otherwise its default is assumed | `"spring-snake-case"` |
+| `jpa.implicitNamingStrategy` | The default join-table naming rule: `spring` uses the owning table and attribute; `jpa-compliant` uses the two tables. Without a declaration or usable configuration, a spelling on which they disagree is HEURISTIC | `"spring"` |
 | `mybatisPlus.namingStrategy` | the same for a MyBatis-Plus name with no `@TableName` or `@TableField` | `"underscore"` |
 | `mybatisPlus.tablePrefix` | the global table prefix MyBatis-Plus puts before a derived table name | `"tb_"` |
 | `mybatisPlus.logicDeleteValue` | the value a logical delete writes into a `@TableLogic` column | `"1"` |

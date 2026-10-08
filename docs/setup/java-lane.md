@@ -852,19 +852,24 @@ as SQL.
 
 ### What it resolves
 
+These naming grades remain subject to the uncertainties described below,
+including version-dependent physical spellings and unread mapping annotations.
+
 | From | To | Grade |
 |---|---|---|
-| `@Entity` + `@Table(name="owners")` | the table `owners` | **EXACT** — the source says so |
-| `@Entity` with no `@Table` | the table the naming strategy gives, from the entity's name: the class's, or the one `@Entity(name = …)` gives it | **EXACT** if the naming strategy is declared (in the profile or the project's Spring configuration), else **HEURISTIC** |
-| `@Column(name="visit_date")` | that column | **EXACT** |
-| a field with no `@Column` | the column the naming strategy gives | as above |
-| `@Id` | the primary-key column | **EXACT** |
+| `@Entity` + `@Table(name="owners")` | the written logical name, passed through the physical naming strategy | **EXACT** when that strategy is declared or all supported strategies agree on the spelling; otherwise **HEURISTIC** |
+| `@Entity` with no `@Table` | the table the naming strategy gives, from the entity's name: the class's, or the one `@Entity(name = …)` gives it | **EXACT** with a usable physical naming declaration and no unmodelled implicit strategy; otherwise **HEURISTIC** |
+| `@Column(name="visit_date")` | the written logical name, passed through the physical naming strategy | **EXACT** when that strategy is declared or all supported strategies agree on the spelling; otherwise **HEURISTIC** |
+| a field with no `@Column` | the column the naming strategy gives | **EXACT** with a usable physical naming declaration and no unmodelled implicit strategy; otherwise **HEURISTIC** |
+| `@Id` | the primary-key column | the grade of its column name |
 | no `@Id` the tree declares (it may sit in a superclass outside the tree), or an `@EmbeddedId` whose type was not read | the assumed default key `id`, by the naming strategy | **HEURISTIC**, and so is every foreign key, join table column, subclass key and `JOINS` edge named after it. Said once as `primary-key-assumed`, and on a by-id lookup that reads it |
-| `@EmbeddedId` | the embeddable's columns are the key columns | as a column |
+| `@EmbeddedId` | the embeddable's columns are the key columns, including nested embeddables | as a column |
+| `@Embedded` | the embeddable's columns, including nested values and dotted attribute overrides on the embedding attribute | as a column |
+| `@JoinColumns` and `@MapsId` | composite foreign keys and shared primary keys; explicit referenced-column names pair the columns | pairing only by position stays **HEURISTIC** and is reported |
 | `@ManyToOne`/`@OneToOne` + `@JoinColumn(name=…)` | that foreign-key column, plus a `JOINS` edge | weakest of the two entity mappings and of the target's key |
 | `@ManyToOne`/`@OneToOne` with no `@JoinColumn` | one foreign-key column per key column of the target, named `<attribute>_<key column>`, so a composite key gives several | as above |
 | `@OneToMany(@JoinColumn)` | the foreign key on the **target** table, plus a `JOINS` edge | as above |
-| `@ManyToMany`, and a `@OneToMany` with neither `@JoinColumn` nor `mappedBy` | a join table and its two columns, plus two `JOINS` edges. `@JoinTable` names them; what it leaves unnamed is named as Spring Boot and JPA name it: the table is the owning table's name, `_`, the attribute (`owners` and `specialTags` give `owners_special_tags`), one column is the inverse attribute's name (or the owning entity's name when nothing maps the association back), `_`, the owner's key, and the other is the attribute's name, `_`, the target's key | a written name **EXACT**; a derived one by the naming strategy, as above |
+| `@ManyToMany`, and a `@OneToMany` with neither `@JoinColumn` nor `mappedBy` | a join table with one foreign-key column per key column on each side, plus `JOINS` edges. `@JoinTable` supplies logical names; defaults use the physical and implicit rules below | an unnamed table is **HEURISTIC** where the supported implicit strategies disagree and neither the profile nor usable configuration states one; other name and key uncertainties still apply |
 | an inverse `@OneToMany`/`@ManyToMany(mappedBy = …)` | no column and no join table of its own: the owning side maps them | **EXACT** |
 | `@MappedSuperclass` | its attributes are inherited by every subclass entity | as above |
 | a derived query (`findByLastNameStartingWith`) | `select` reading the predicate and ordering columns | the statement's table by the table's name, each column by its own |
@@ -985,7 +990,8 @@ application, but it reads where the application declares the strategy:
 reads (`src/main/resources`, and its `config/` directory), in any spelling Spring
 binds, whether the roots were named by flags or discovered. Another module's
 configuration is not read for this one. A
-recognized class there is a declaration, and the run says so
+recognized class there is a declaration only when the setting reaches the
+factory that builds this persistence unit (see below), and the run says so
 (`JPA_NAMING_FROM_CONFIGURATION`). A class this engine does not model, or two
 configuration files that name different strategies, declare nothing it can
 apply, and the run says that too. So does a strategy that only a profile-specific
@@ -995,18 +1001,37 @@ runs is not in the tree. Under `spring.jpa.properties` the key counts only as
 Hibernate spells it (`hibernate.physical_naming_strategy`), because Spring binds
 that map verbatim.
 
-When neither the profile nor the configuration declares it, the engine
-**assumes** Spring Boot's default and grades every name it derived that way
-`HEURISTIC`, which means `endpoint_impact` at the default `conservative` mode
-returns **nothing** for such a column, and says why in `limits`. A table named
-that way is HEURISTIC too, and a walk grades a table by the SQL edge that
-reaches it, so a project whose entities carry no `@Table` reaches none of those
-tables at `conservative` until the strategy is declared: egovframe-msa-edu
-reached 20 tables there and now reaches none.
+The physical default depends on who builds the EntityManagerFactory:
+
+| Factory found in the tree | Assumed physical / implicit naming |
+|---|---|
+| no project-owned factory | Spring Boot: `spring-snake-case` / `spring` |
+| built from Boot's `EntityManagerFactoryBuilder` | Boot's defaults, with an explicit caveat that the builder carries them only from Boot 3.4; earlier versions carry only `spring.jpa.properties` |
+| built by hand with `new`, Spring XML, or a factory `@Bean` without Boot's builder | Hibernate: `identity` / `jpa-compliant` |
+
+The lane reports the factory's file and line (`JPA_NAMING_FROM_FACTORY`). It
+reads factory types, naming setters and property maps through the `jpa` rule
+pack. It does not execute configuration code or determine the Boot version.
+A setting found in code is reported as `SETTING_IN_CODE`; an explicit profile
+declaration settles the corresponding naming dimension.
+
+For both physical and implicit settings, Boot's own
+`spring.jpa.hibernate.naming.*-strategy` key reaches Boot's factory, reaches a
+builder-made factory only from 3.4 (therefore HEURISTIC here), and does not reach
+a hand-built factory. The exact `spring.jpa.properties.hibernate.*_naming_strategy`
+key reaches Boot's and builder-made factories in every version, but not a
+hand-built one. Ignored settings are reported. `cascade init` declares neither
+strategy automatically.
+
+When neither the profile nor usable configuration declares a physical strategy,
+the factory's default is an assumption. Names the supported physical strategies
+spell differently stay HEURISTIC. `endpoint_impact` in conservative mode leaves
+those links out and explains why in `limits`. Matching a catalog name does not
+promote them.
 
 That is not a bug to work around; it is the engine refusing to present a guess as
 a fact. Declare the rule in the profile (it wins over the configuration) and the
-same mappings become EXACT:
+supported mappings can become EXACT, subject to other mapping uncertainties:
 
 ```json
 {
@@ -1032,10 +1057,43 @@ same mappings become EXACT:
   `PhysicalNamingStrategyStandardImpl`, what you get with
   `spring.jpa.hibernate.naming.physical-strategy` set to it).
 - `null` (the default) — take the strategy the project's Spring configuration
-  names, and when it names none, assume the Spring Boot default and grade HEURISTIC.
+  names if it reaches the factory; otherwise assume that factory's default and grade uncertain names HEURISTIC.
 
-A name the source spells out with `@Table`/`@Column`/`@JoinColumn`/`@JoinTable`
-is EXACT either way — the strategy is never consulted for it.
+Names written in `@Table`, `@Column`, `@JoinColumn` and `@JoinTable` also pass
+through the physical strategy. With snake case, `@Column(name="createdBy")`
+becomes `created_by`; `identity` keeps `createdBy`. A written name is EXACT
+without a declaration only when the supported physical strategies agree.
+
+**Implicit naming is a separate declaration.** `jpa.namingStrategy` states the
+physical rule only. `jpa.implicitNamingStrategy` accepts:
+
+- `"spring"`: a default join table uses the owning table and association
+  attribute (`owners_special_tags`).
+- `"jpa-compliant"`: it uses the two tables (`owners_tags`).
+- `null`: read usable configuration, otherwise assume the factory's default.
+  Where the two supported rules disagree, the derived table and its links stay
+  HEURISTIC (`JPA_IMPLICIT_NAMING_ASSUMED`). Where they agree, this uncertainty
+  alone does not lower the grade.
+
+The configuration reader recognizes `SpringImplicitNamingStrategy` (including
+its Boot 4 package) and `ImplicitNamingStrategyJpaCompliantImpl` under
+`spring.jpa.hibernate.naming.implicit-strategy` or the exact passthrough key
+`spring.jpa.properties.hibernate.implicit_naming_strategy`, with the factory
+reach rules above. Custom, legacy-HBM, legacy-JPA and component-path classes
+are not modelled; their differences extend beyond a join-table formula, so
+they are reported rather than accepted as aliases. When such a setting can
+reach the factory, derived names stay HEURISTIC; written names retain their
+physical-strategy grading. Verify the actual strategy
+before declaring one of the supported values.
+
+For example, after verifying both runtime rules:
+
+```json
+{ "jpa": { "namingStrategy": "identity", "implicitNamingStrategy": "jpa-compliant" } }
+```
+
+Declaring one dimension settles only that dimension. The new implicit key is
+left out of the profile digest while null. Collection tables remain unread.
 
 **Invariant I-1, in this lane:** if the derived table name happens to exist in
 the DB catalog, that is recorded on the node as `jpaCatalogMatch: true` and
@@ -1043,17 +1101,16 @@ the DB catalog, that is recorded on the node as `jpaCatalogMatch: true` and
 
 ### What it does NOT resolve
 
-- An `@Embedded` attribute produces no column, and the run says so
-  (`embedded-not-read`). An `@EmbeddedId`'s embeddable is read: its columns are
-  the key.
+- An embedded type the tree cannot resolve remains a reported gap. Nested
+  embeddables and attribute overrides on the embedding attribute are read;
+  recursive or unsupported mappings are not silently treated as complete.
 - An `@ElementCollection` keeps its values in a table of its own, which this
   lane does not read. The attribute is no column of its owner, no statement
   here reaches that table, and the run says so (`element-collection-not-read`).
 - A mapping annotation that can name or place a column otherwise than the
   plain reading is not read, and its column is not trusted: an attribute with
-  `@JoinColumns`, a formula (`@Formula`, `@JoinFormula` and their kin), an
-  override (`@AttributeOverride`, `@AssociationOverride`), or `@MapsId` with no
-  `@JoinColumn`; and on the class, `@SecondaryTable` or an override, which
+  a formula (`@Formula`, `@JoinFormula` and their kin), an unsupported override
+  or `@AssociationOverride`; and on the class, `@SecondaryTable` or an override, which
   covers every column of the entity. Such a column keeps its plain reading,
   graded **HEURISTIC**, and the run names the annotation it did not read
   (`jpa-mapping-unread`).
@@ -1064,7 +1121,12 @@ the DB catalog, that is recorded on the node as `jpaCatalogMatch: true` and
 - An annotation on an attribute that this lane does not know at all is said
   (`jpa-annotation-unknown`), and the attribute's column is **HEURISTIC**: what
   it does to the column is not known. The lane keeps a list of the annotations
-  it knows change nothing it draws.
+  it knows change nothing it draws. A marker annotation declared in the tree
+  can also be recognized as inert when its metadata is inert and no Hibernate
+  boot extension could interpret it. Implemented extension points and
+  `META-INF/services` registrations block this inference. Resource files are
+  read during discovery; an explicit-lane run that did not read them reports
+  `jpa-resources-unread`, and the working-tree overlay retains the recorded inputs.
 - Hibernate annotations that may change what a statement reaches are said and
   not followed (`jpa-reach-unread`): `@Fetch`, `@Where`, `@SQLRestriction`,
   `@Cascade` and their kin.

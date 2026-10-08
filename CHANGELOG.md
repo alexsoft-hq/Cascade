@@ -12,6 +12,38 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Added
 
+- **Separate JPA physical and implicit naming declarations.**
+  `jpa.implicitNamingStrategy` accepts `spring` and `jpa-compliant`; both Spring
+  implicit-naming configuration keys are read with the same factory reach rules
+  as physical naming. A default join-table spelling that depends on an
+  undeclared implicit rule stays HEURISTIC. Unsupported implicit strategies
+  keep derived names HEURISTIC without lowering explicitly written names just
+  because they are present. Declaring the implicit rule clears its uncertainty
+  note, including when configuration code also names a strategy. The new key
+  does not change the profile digest while unset.
+
+- **JPA names follow the factory and the mapping.** Written names also pass
+  through physical naming; hand-built EntityManagerFactories assume Hibernate's
+  defaults, while Boot builder factories retain the documented Boot 3.4
+  qualification. Nested embeddables, composite join columns and shared keys
+  through `@MapsId` are read. A locally declared inert marker annotation need
+  not weaken a column, but Hibernate boot extensions and ServiceLoader entries
+  prevent that assumption. See [the Java lane](docs/setup/java-lane.md).
+
+- **One mode for Start rankings and Trace lists.** `browse` accepts `mode`,
+  caches its census per graph and mode, and defaults to conservative as before.
+  Start's screen ranking now follows the control along with tables and APIs.
+  Trace refreshes its list and expanded columns in the selected mode, retaining
+  the selected target. A late screen-ranking response from a previous project
+  cannot erase the current project's pending ranking. English plural forms,
+  clipped labels and map counts use the page's language consistently.
+
+- **Comments and path spelling do not hide input.** Comments within a
+  `CREATE TABLE` header no longer hide the table. The two OpenAPI provenance
+  lists reject conflicting declarations of the same document after path
+  normalization. The `servers` profile documentation now states its existing
+  analyzed-root-relative path convention.
+
 - **Rule packs, and `cascade rules`.** The engine's knowledge of frameworks is
   moving out of its code into JSON rule packs a person can read, each rule with
   the examples that hold it (`src/core/rules/packs/`, [docs/rules.md](docs/rules.md)).

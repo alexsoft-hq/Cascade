@@ -223,15 +223,11 @@ screen, walked down. A name in a ranking gives way in the middle, so the tail
 that tells two routes or tables apart stays.
 
 **The mode Start counts in.** The map's mode control moves the map, the shares
-and the busiest tables and APIs together: the page asks the `overview` once in
-that mode and draws them from it. A line over the shares says the mode and
-depth they were counted in ("The shares and the busiest lists below are
-counted in {mode}, depth {depth}."), and each busiest list says its own
-("counted in heuristic"). The busiest screens come from the census `browse
-kind=screen` walks, and say that census's mode, which the control does not
-move. While Start looks in a mode other than the census's, its first line says
-so ("The map, the shares and the busiest lists are counted in heuristic now.
-The gaps and Analysis status stay in conservative.") with a button back.
+and every busiest list together. The page asks `overview` and `browse
+kind=screen` in that mode and keeps each answer per mode. The line over the
+shares says the mode and depth, and each ranking names its mode. The gaps and
+Analysis status retain their conservative census; Start says so when another
+mode is selected and offers a button back.
 
 ### The map
 
@@ -361,11 +357,11 @@ first line, with the whole width, so a name keeps the tail that tells two rows
 apart; under it the numbers, spelled out in the reader's language
 (`reads 7  writes 8  API 22  screens 12`), then the row's own comment. A
 number's title says what it counts. Beside the count line the list says the
-mode its numbers were walked in ("counted in conservative"): they come from one
-walk of the whole project, which `browse` names in `census` (`{mode, depth}`),
-while Trace counts in the mode on its own control, so the two can differ.
-jeecg-boot's `sys_user` reads `API 124` on the list and 186 APIs in a heuristic
-Trace, and each says which walk it is. Routes and screens sit under
+mode its numbers were walked in ("counted in conservative"). The list and the
+answer beside it follow Trace's mode control. `browse.census` records the
+list's mode and depth. Changing mode refreshes the list and expanded table
+columns while preserving the selected target; a cached list is reused only
+for the same mode. Routes and screens sit under
 their API group, and a table has a caret that opens it into its own columns, so
 you can walk from a table down to the column you are about to change. Every row
 and every number is one `browse` answer, so the page counts nothing. The kind
