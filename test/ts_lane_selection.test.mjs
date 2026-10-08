@@ -66,7 +66,7 @@ test('two roots named read the first alone, because one pack holds one applicati
   assert.deepEqual(r.tsSrc, [path.join(ROOT, 'a/src')]);
   const d = r.diagnostics.find((x) => x.kind === 'TS_ONE_APP');
   assert.ok(d, JSON.stringify(r.diagnostics));
-  assert.match(d.reason, /only .*a\/src is read/);
+  assert.ok(d.reason.includes(`only ${path.join(ROOT, 'a/src')} is read`), d.reason);
 });
 
 test('--no-ts switches the lane off even when the profile declares it', () => {
