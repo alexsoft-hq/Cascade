@@ -95,6 +95,15 @@ surface; these are the six worth learning first.
 | NestJS, Prisma and TypeORM | the controllers a module the application loads registers, under the global prefix and URI version its bootstrap sets; the calls between methods through `this`, injected fields, imported functions and static methods, and through an abstract class or an interface to the classes that answer it; the files of a monorepo's shared library the imports reach; every Prisma or TypeORM call as a statement of its own, with the relations a Prisma call names, read against `schema.prisma` or the TypeORM entities, which are the catalog | `EXACT` for a route whose address the bootstrap states, for a Prisma call on `PrismaClient` or a class extending it, and for a TypeORM name whose naming strategy, table prefix and schema are known; `SOUND_SET` for a call between methods, a call through an abstract type whose set the module bindings settle, the `nestjs-prisma` client, and a column a `select` may leave out; `HEURISTIC` for a route an exclude built at run time may move, a TypeORM name that depends on a strategy, prefix or schema the source leaves to run time, and a call through an abstract type whose set may be short | a prefix or a module list the source builds at run time, which makes no route and says so; raw SQL; Prisma's fluent relation API; TypeORM embedded entities, table inheritance and Active Record calls; guards and interceptors; Mongoose |
 | Frontends | `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx` and the `<script>` blocks of `.vue` single-file components; `axios` and `fetch` and `XMLHttpRequest`, Angular's `HttpClient` known by the type a field is declared with, and the project's own wrappers, an object's methods included, traced to whichever of them sends the request; a base URL read per build from the `.env` files the build tool reads; `vue-router`, `react-router` and Angular `Routes` declarations composed into screens; OpenAPI 3 and Swagger 2 documents as declared routes; HAR recordings as runtime evidence | `SOUND_SET` for a call traced to a client that sends it; `EXACT` for a `RENDERS` edge onto the file a route declares; `HEURISTIC` for a call whose base URL rests on a default no `.env` file sets, or only on hosts that are not this machine, for a call to this machine on a port no file states, and for a call through a wrapper step whose URL, method or base URL the code does not settle | which of an imported component's functions really runs, which is a run-time question and stays `SOUND_SET` |
 
+NestJS prefix exclusions can also be read from imported literal constants,
+templates, string `substring`, ordered array spreads and pure one-parameter
+`map` expressions. The engine does not execute the application. Mutation,
+unsafe escapes or dynamic code such as `eval` and `Function` can prevent it
+from settling the list; those routes stay `HEURISTIC`. A verified exclusion
+list can be declared as `tsBackend.globalPrefixExclude`, while a prefix read
+from runtime configuration needs `tsBackend.globalPrefix`. See the
+[TypeScript lane](docs/setup/ts-lane.md) for the supported expressions and limits.
+
 **Not supported, and the engine says so rather than guessing.** Kotlin sources.
 Any backend this engine has no lane for, unless it publishes an OpenAPI
 document, in which case the routes exist and nothing below them is walked.
@@ -822,6 +831,10 @@ pack as drawings), **Compare** (what changed since an earlier build) and
 **Analysis status** (what the analysis could and could not see). A link written
 for the tabs they replaced still lands where it did.
 
+Start's rankings and Trace's browse counts follow the selected evidence mode,
+so changing between `strict`, `conservative` and `heuristic` updates both the
+lists and the answer they lead to.
+
 ### Start
 
 ![The landing page in the light theme: how much of the chain is wired, and a
@@ -917,6 +930,13 @@ map is flat and still; 3D and the moving dots sit behind one **Advanced view**
 switch, off by default. Double-click a node for **Around \<node\>**: that node in
 the middle, what touches it on ring 1, what touches those on ring 2.
 
+The graph follows the selected evidence mode. In `conservative`, a route whose
+address is still `HEURISTIC` does not connect to its handler or downstream
+tables. **Analysis status** shows the diagnostic and any supported profile
+setting that can settle it. A project analyzed with an explicit declaration,
+such as a verified NestJS exclusion list, depends on that declaration; the
+result does not imply that the same settings were inferred automatically.
+
 ![Table links, by SQL joins: the whole schema laid out by the joins the mapper
 SQL makes, with the hub tables ranked beside it](docs/assets/screens/erd.png)
 
@@ -925,6 +945,18 @@ mapper SQL makes between tables. It used to be called the ERD; foreign keys are
 never read, so a relationship here is a join some statement actually makes. On
 mall that is 27 relationships over 76 tables, joining 32 of them; the other 44
 sit in a strip under the map, named as such rather than dropped.
+
+Selecting a table opens a docked inspector. Drag its left edge or use the
+keyboard to resize it; **Widen** and **Reset width** provide quick controls,
+and the preferred width is remembered. Columns use one row each for name,
+type and comment, with a filter across all three. Long names and types stay
+intact and scroll horizontally. Relationship evidence starts folded above
+the columns. Resizing preserves the selection and graph layout, and narrow
+screens place the inspector below the drawing. Connected-project tables use
+the same inspector. See [the viewer guide](docs/viewer.md) for the controls.
+
+![Ghostfolio's SymbolProfile table in the widened inspector: searchable column
+rows keep dataGatheringFrequency and its type on one line](docs/assets/screens/table-inspector.jpg)
 
 ![Transactions: each @Transactional method with its write count, read
 count and the number of tables one commit can

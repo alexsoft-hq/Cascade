@@ -94,6 +94,15 @@ SAST 와 CodeQL 은 취약점을 찾습니다. Cascade 는 변경이 어디까�
 | NestJS, Prisma, TypeORM | 애플리케이션이 불러오는 모듈이 등록한 컨트롤러를, 부트스트랩이 정한 전역 prefix 와 URI 버전 아래에서 읽습니다. `this`, 주입된 필드, import 한 함수, static 메서드를 거친 메서드 사이 호출을 잇고, 추상 클래스나 인터페이스를 거친 호출은 그 호출에 답하는 클래스까지 잇습니다. import 가 닿는 모노레포 공유 라이브러리 파일도 읽습니다. Prisma·TypeORM 호출은 호출한 자리마다 문장 하나로 읽습니다. Prisma 호출이 이름을 댄 relation 도 따라가고, `schema.prisma` 나 TypeORM 엔티티를 카탈로그로 삼아 맞춰 봅니다 | 부트스트랩이 주소를 밝힌 라우트, `PrismaClient` 나 그 하위 클래스로 부른 Prisma 호출, naming strategy·테이블 prefix·schema 를 아는 TypeORM 이름은 `EXACT`. 메서드 사이 호출, 모듈 바인딩이 후보를 확정한 추상 타입 경유 호출, `nestjs-prisma` 클라이언트, `select` 가 뺄 수도 있는 컬럼은 `SOUND_SET`. 실행 중에 만든 exclude 목록이 주소를 바꿀 수 있는 라우트, 소스가 실행 시점에 맡긴 전략·prefix·schema 에 기대는 TypeORM 이름, 후보가 빠졌을 수 있는 추상 타입 경유 호출은 `HEURISTIC` | 소스가 실행 중에 만드는 prefix 나 모듈 목록. 라우트를 만들지 않고 그렇다고 알립니다. raw SQL, Prisma 의 fluent relation API, TypeORM 의 embedded 엔티티·테이블 상속·Active Record 호출, guard 와 interceptor, Mongoose |
 | 프런트엔드 | `.js`, `.mjs`, `.cjs`, `.jsx`, `.ts`, `.tsx` 와 `.vue` 단일 파일 컴포넌트의 `<script>` 블록. `axios`, `fetch`, `XMLHttpRequest`, 필드의 선언 타입으로 알아보는 Angular `HttpClient`, 그리고 객체의 메서드로 만든 것까지 포함해 프로젝트가 직접 만든 래퍼를 실제로 요청을 보내는 지점까지 추적합니다. base URL 은 빌드 도구가 읽는 `.env` 파일에서 빌드마다 읽습니다. `vue-router`, `react-router`, Angular `Routes` 선언은 화면으로 합성되고, OpenAPI 3 과 Swagger 2 문서는 선언된 라우트로, HAR 기록은 런타임 증거로 읽습니다 | 요청을 보내는 클라이언트까지 추적된 호출은 `SOUND_SET`, 라우트가 선언한 파일로 가는 `RENDERS` 엣지는 `EXACT`. 어떤 `.env` 파일도 정하지 않은 기본값이나, 이 머신이 아닌 호스트에만 기댄 base URL 위의 호출, 어떤 파일도 말하지 않는 포트로 이 머신에 가는 호출, URL·메서드·base URL 을 코드가 정하지 못하는 래퍼 단계를 지나는 호출은 `HEURISTIC` | import 된 컴포넌트의 어느 함수가 실제로 실행되는지. 이것은 런타임 질문이므로 `SOUND_SET` 에 머무릅니다 |
 
+NestJS의 prefix 제외 목록은 import한 리터럴 상수, 템플릿 문자열, 문자열
+`substring`, 순서를 유지하는 배열 펼치기, 매개변수 하나의 순수한 `map`으로
+만든 경우도 읽습니다. 애플리케이션 코드를 실행하지는 않습니다. 값의 변경,
+안전성을 확인할 수 없는 외부 전달, `eval`·`Function` 같은 동적 코드 때문에
+목록을 확정하지 못하면 라우트는 `HEURISTIC`으로 남습니다. 확인한 제외 목록은
+`tsBackend.globalPrefixExclude`로 선언할 수 있고, 실행 환경에서 읽는 prefix는
+`tsBackend.globalPrefix`로 선언합니다. 지원하는 표현식과 한계는
+[TypeScript 레인](docs/ko/setup/ts-lane.md)을 참고하세요.
+
 **지원하지 않는 것, 그리고 엔진이 추측 대신 그렇다고 말하는 것.** Kotlin
 소스입니다. 레인이 없는 백엔드는 OpenAPI 문서를 발행하지 않는 한 지원하지
 않으며, 발행한다면 라우트는 존재하되 그 아래로는 걸어 내려가지 않습니다.
@@ -815,6 +824,10 @@ build**(개수와 빌드), 최신성과 신뢰도와 프로젝트 한계 개수�
 바뀌었나), **Analysis status**(분석이 무엇을 봤고 무엇을 못 봤나)입니다. 예전 탭
 이름으로 만든 링크도 원래 가던 곳으로 갑니다.
 
+Start의 순위와 Trace 탐색 목록의 개수는 선택한 근거 모드를 따릅니다.
+`strict`, `conservative`, `heuristic`을 바꾸면 목록과 그 목록에서 여는 답이
+같은 모드로 갱신됩니다.
+
 ### Start
 
 ![밝은 테마의 첫 화면. 체인이 얼마나 이어져 있는지와 프로젝트 전체 지도가 종이
@@ -902,6 +915,13 @@ Trace 는 빈 검색창이 아니라 **목록**으로 열립니다. 고를 수 �
 꺼짐입니다. 노드를 더블클릭하면 **Around \<node\>** 입니다. 가운데에 그 노드,
 링 1 에 그 노드에 닿는 것, 링 2 에 다시 그것들에 닿는 것이 놓입니다.
 
+그래프도 선택한 근거 모드를 따릅니다. 주소가 아직 `HEURISTIC`인 라우트는
+`conservative`에서 핸들러나 그 아래 테이블로 이어지지 않습니다.
+**Analysis status**에서 원인 진단과 이를 확정할 수 있는 프로필 설정을 확인할
+수 있습니다. 소스로 확인한 NestJS 제외 목록처럼 설정을 명시해서 분석한
+프로젝트의 결과는 그 선언을 전제로 합니다. 같은 설정을 자동으로 추론했다는
+뜻은 아닙니다.
+
 ![Table links, by SQL joins. 매퍼 SQL 이 만드는 조인으로 배치한 스키마 전체와,
 옆의 허브 테이블 순위](docs/assets/screens/erd.png)
 
@@ -910,6 +930,18 @@ Trace 는 빈 검색창이 아니라 **목록**으로 열립니다. 고를 수 �
 여기의 관계는 어떤 statement 가 실제로 하는 조인입니다. mall 에서는 76 개
 테이블에 관계가 27 개이고, 그중 32 개 테이블이 조인에 들어갑니다. 나머지 44 개는
 버리지 않고 지도 아래 띠에 이름을 적어 둡니다.
+
+테이블을 선택하면 옆에 상세 패널이 열립니다. 왼쪽 경계를 드래그하거나
+키보드로 폭을 조절할 수 있고, **넓히기**와 **너비 초기화** 버튼도 있습니다.
+조절한 폭은 브라우저에 기억됩니다. 컬럼은 이름·타입·설명을 한 행에 표시하며,
+세 항목을 모두 검색할 수 있습니다. 긴 이름과 타입은 한 글자씩 끊지 않고
+가로로 스크롤해 읽습니다. 관계 근거는 컬럼 위에 접혀 있다가 펼쳐 볼 수 있습니다.
+폭을 바꿔도 선택과 그래프 배치는 유지되고, 좁은 화면에서는 패널이 그림 아래로
+내려갑니다. 연결된 프로젝트의 테이블도 같은 패널을 사용합니다. 조작 방법은
+[뷰어 안내](docs/ko/viewer.md)에 있습니다.
+
+![Ghostfolio의 SymbolProfile 테이블을 넓힌 상세 패널. 컬럼을 검색할 수 있고
+dataGatheringFrequency와 타입이 한 줄로 표시됩니다](docs/assets/screens/table-inspector.jpg)
 
 ![Transactions. `@Transactional` 메서드마다 쓰기 수, 읽기 수, 커밋 하나가 건드릴
 수 있는 테이블 수가 붙어 있습니다](docs/assets/screens/transactions.png)
