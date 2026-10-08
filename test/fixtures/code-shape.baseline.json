@@ -10259,6 +10259,50 @@
     "wireGraphToolbar/9/1",
     "wireGraphToolbar/9/1/1"
    ]
+  },
+  "src/adapters/ts/static_constants.mjs": {
+   "maxLines": 15,
+   "maxBranches": 16,
+   "longest": "exportedNames",
+   "branchiest": "exportedBinding",
+   "functions": [
+    "arrayValue",
+    "arrayValue/1",
+    "callValue",
+    "callValue/1",
+    "callValue/2",
+    "callValue/3",
+    "constantEvaluator",
+    "constantEvaluator/1",
+    "evaluate",
+    "exportedBinding",
+    "exportedNames",
+    "intrinsicSafe",
+    "intrinsicSafe/1",
+    "keyOf",
+    "namespaceEscape",
+    "namespaceEscape/1",
+    "namespaceEscape/2",
+    "namespaceEscape/3",
+    "namespaceEscape/4",
+    "namespaceEscape/5",
+    "objectValue",
+    "reexports",
+    "reexports/1",
+    "refKey",
+    "referenceValue",
+    "resolveBinding",
+    "resolveBinding/1",
+    "resolveBinding/2",
+    "run",
+    "safeArray",
+    "safeArray/1",
+    "templateValue",
+    "templateValue/1",
+    "templateValue/2",
+    "templateValue/3",
+    "templateValue/4"
+   ]
   }
  }
 }

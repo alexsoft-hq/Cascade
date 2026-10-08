@@ -12,6 +12,12 @@ Each dated section below is one round of work. The round protocol is in
 
 ### Added
 
+- **Source-backed NestJS prefix exclusions.** Imported literal constants,
+  templates, string `substring`, array spreads and pure primitive-array `map`
+  expressions can settle an exclusion list without running project code.
+  Mutation and escape checks retain heuristic grading when the value is not
+  proven. The TypeScript fact version advances to invalidate older shards.
+
 - **Readable, resizable table details.** Table links has a docked inspector
   with a remembered width, keyboard resizing and a widen control. Columns use
   searchable name/type/comment rows instead of squeezing two lists into a narrow

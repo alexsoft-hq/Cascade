@@ -96,6 +96,17 @@ application). Its address rules are applied the way Nest applies them:
 | `RouterModule.register([{ path: 'admin', module: AdminModule }])` | `/admin` before the routes of the controllers AdminModule declares |
 | `@Get(':id')` | `{id}`, as every other lane writes a path variable |
 
+Prefix exclusions also read bounded expressions built from local or imported
+literal constants: templates, string `substring` with literal integer arguments,
+ordered array spreads, and a one-parameter pure `map` over primitive values.
+The engine reads syntax without executing the application. An array needs a
+complete reference census in the loaded project; mutations, unsafe escapes,
+ambiguous imports and unsupported callbacks keep the exclusion unread. Dynamic
+code such as `eval` or `Function` also prevents a complete census. When this
+boundary applies, a verified list can be declared as
+`tsBackend.globalPrefixExclude`. Runtime configuration still needs the deployed
+value declared in the profile.
+
 **What is not known makes no route.** A setting is known only when it is sure:
 one call that may not run (under a condition, in a loop, in a callback), two
 that set different values, a call of that name on something that is not the
@@ -113,7 +124,7 @@ leave it unknown. Each of these is a diagnostic on the run:
 | `TS_MODULE_IMPORT_UNREAD` | a module list holding a variable (`isDocumentDb ? A : B`) or a spread | the modules it may hold are not walked |
 | `TS_CONTROLLER_UNREAD` | a module's `controllers` names a class this engine does not read (a package's, or one in a file the run left out), or holds something that is not a class name | that controller's routes are not served here |
 | `TS_ROUTES_WITHOUT_CONTROLLER` | a class whose methods declare routes and that no Nest controller decorator marks (a decorator of the project's own that wraps `Controller`) | its routes are not served here |
-| `TS_PREFIX_EXCLUDE_UNREAD` | an exclude entry this engine cannot read: a template, a spread of a list, a pattern in another syntax | every route under the prefix is made at the prefixed address and graded HEURISTIC, since the entry may name it; `tsBackend.globalPrefixExclude` declares the list and makes them EXACT |
+| `TS_PREFIX_EXCLUDE_UNREAD` | an exclude entry this engine cannot settle: a runtime value, an unsafe array use, an unsupported expression or pattern | every route under the prefix is made at the prefixed address and graded HEURISTIC, since the entry may name it; `tsBackend.globalPrefixExclude` declares the list and makes them EXACT |
 | `TS_PREFIX_DECLARED` | the profile's `tsBackend.globalPrefix` differs from the literal the bootstrap sets | the profile's is used |
 
 The one address that is made while something about it is unknown is the one an

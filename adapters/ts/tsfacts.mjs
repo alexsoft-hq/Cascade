@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { staticValue, staticFacts } from './tsstatic.mjs';
 // tsfacts.mjs — the TypeScript backend worker: what each .ts file says, read from that file alone.
 //
 // USAGE
@@ -65,7 +66,7 @@ const SCHEMA = 'cascade:tsfacts:1';
 //    chain gives, and each value a `||`, `??` or `&&` may be, as `bind`s. Test
 //    files are listed like any other: which are a test's is the typescript
 //    pack's to say (ts.test-support).
-export const VERSION = 'tsfacts/9';
+export const VERSION = 'tsfacts/10';
 
 const require = createRequire(import.meta.url);
 // The same vendored parser the web worker reads TypeScript with.
@@ -495,7 +496,7 @@ function rootIdentifier(callee) {
  */
 function callRecord(file, node, { here, callee, n, cond, holder, chain, branch }, sc) {
   return {
-    kind: 'call', file, in: here, callee, args: node.arguments.map((a) => valueOf(a, 0, sc)), n,
+    kind: 'call', file, in: here, callee, args: node.arguments.map((a) => valueOf(a, 0, sc)), staticArgs: node.arguments.map((a) => staticValue(a, sc)), n,
     ...(holder ? { holder: holder.name } : {}), ...(cond ? { cond: true } : {}),
     ...(chain ? { chain: chain.steps, ...(chain.holder ? { chainHolder: chain.holder } : {}) } : {}),
     line: lineOf(node),
@@ -871,8 +872,9 @@ export function factsOfFile(file, code) {
   const emit = (r) => out.push(r);
   // That the file was read, whatever it holds: a file of constants and types
   // alone is still a file of the project, not a package.
-  emit({ kind: 'file', file });
   const sc = readScopes(ast);
+  emit({ kind: 'file', file });
+  emit({ kind: 'static-context', file, staticFacts: staticFacts(ast, sc) });
   const names = nameClasses(ast, sc);
   declarationRecords(file, ast, emit, sc, names);
   localClassRecords(file, emit, sc, names);

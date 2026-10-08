@@ -92,6 +92,16 @@ Nest가 적용하는 방식 그대로 적용합니다.
 | `RouterModule.register([{ path: 'admin', module: AdminModule }])` | AdminModule이 선언한 컨트롤러의 라우트 앞에 `/admin` |
 | `@Get(':id')` | `{id}`. 다른 레인이 경로 변수를 쓰는 방식과 같습니다 |
 
+prefix 제외 목록은 같은 파일이나 import한 리터럴 상수로 만든 제한된 표현식도
+읽습니다. 템플릿 문자열, 정수 리터럴을 인자로 받는 문자열 `substring`, 순서를
+유지하는 배열 펼치기, 원시 값 배열에 대한 매개변수 하나의 순수한 `map`을
+지원합니다. 애플리케이션을 실행하지 않고 문법을 읽습니다. 배열은 읽은 프로젝트
+전체에서 참조 사용처를 확인할 수 있어야 합니다. 변경, 안전성을 확인할 수 없는
+외부 전달, 모호한 import, 지원하지 않는 콜백은 여전히 모름으로 남깁니다.
+`eval`이나 `Function`처럼 코드를 동적으로 만드는 경우에도 참조를 모두 확인했다고
+보지 않습니다. 이 한계에 걸리면 확인한 목록을 `tsBackend.globalPrefixExclude`로
+선언할 수 있습니다. 실행 환경에서 정하는 설정은 실제 배포 값을 프로필에 선언해야 합니다.
+
 **모르면 라우트를 만들지 않습니다.** 설정은 확실할 때만 압니다. 실행되지 않을 수
 있는 호출(조건문 안, 반복문 안, 콜백 안), 서로 다른 값을 넣는 두 호출, 애플리케이션이
 아닌 대상에 같은 이름으로 부르는 호출, 이 엔진이 읽지 못하는 코드에 애플리케이션을
@@ -109,7 +119,7 @@ Nest가 적용하는 방식 그대로 적용합니다.
 | `TS_MODULE_IMPORT_UNREAD` | 모듈 목록에 변수(`isDocumentDb ? A : B`)나 펼치기가 있음 | 그 안의 모듈은 따라가지 않음 |
 | `TS_CONTROLLER_UNREAD` | 모듈의 `controllers` 가 이 엔진이 읽지 않은 클래스(패키지의 것, 이번 실행이 뺀 파일의 것)를 가리키거나, 클래스 이름이 아닌 것을 담음 | 그 컨트롤러의 라우트는 여기서 서빙하지 않음 |
 | `TS_ROUTES_WITHOUT_CONTROLLER` | 메서드가 라우트를 선언했는데 Nest 컨트롤러 데코레이터가 붙지 않은 클래스(`Controller`를 감싼 프로젝트 자체 데코레이터) | 그 라우트는 서비스하지 않음 |
-| `TS_PREFIX_EXCLUDE_UNREAD` | 이 엔진이 읽지 못하는 exclude 항목: 템플릿 문자열, 목록 펼치기, 다른 문법의 패턴 | prefix 아래 모든 라우트를 prefix 붙은 주소로 만들고 HEURISTIC 등급을 붙임. 그 항목이 이름을 댈 수도 있기 때문. `tsBackend.globalPrefixExclude`에 목록을 적으면 EXACT가 됨 |
+| `TS_PREFIX_EXCLUDE_UNREAD` | 이 엔진이 확정하지 못하는 exclude 항목: 실행 시 정하는 값, 안전성을 확인할 수 없는 배열 사용, 지원하지 않는 표현식이나 패턴 | prefix 아래 모든 라우트를 prefix 붙은 주소로 만들고 HEURISTIC 등급을 붙임. 그 항목이 이름을 댈 수도 있기 때문. `tsBackend.globalPrefixExclude`에 목록을 적으면 EXACT가 됨 |
 | `TS_PREFIX_DECLARED` | 프로필의 `tsBackend.globalPrefix`가 부트스트랩의 리터럴과 다름 | 프로필 값을 씀 |
 
 무언가를 모르는데도 만드는 주소는 딱 하나, 읽지 못한 exclude가 바꿀 수 있는 주소입니다.

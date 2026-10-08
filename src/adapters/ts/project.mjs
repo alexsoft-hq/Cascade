@@ -61,6 +61,7 @@ function indexRecords(records) {
     if (!r || typeof r.file !== 'string') continue;
     const f = at(r.file);
     switch (r.kind) {
+      case 'static-context': f.staticFacts = r.staticFacts; break;
       case 'import': f.imports.push(r); break;
       case 'export': f.exports.push(r); break;
       case 'method': case 'ctorParam': case 'property': pendingMembers.push(r); break;

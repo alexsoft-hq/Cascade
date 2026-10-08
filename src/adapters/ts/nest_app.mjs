@@ -15,6 +15,7 @@
 
 import { versionsOf } from '../../core/rules/kinds/ts_route_decorator.mjs';
 import { patternRegex } from './route_pattern.mjs';
+import { constantEvaluator } from './static_constants.mjs';
 
 const MAX_SITES = 64;
 
@@ -104,7 +105,11 @@ function excludeEntry(entry, app) {
  * its entries this engine cannot read: a route one of them names would be
  * served without the prefix, and which routes that is, is not known.
  */
-function excludesOf(opts, app) {
+function excludesOf(opts, app, resolved) {
+  if (resolved?.known && Array.isArray(resolved.value)) {
+    const read = resolved.value.map((v) => typeof v === 'string' ? excludeEntry({ k: 'str', v }, app) : null);
+    return { matchers: read.filter(Boolean), unread: read.filter((m) => !m).length };
+  }
   if (!opts) return { matchers: [], unread: 0 };
   // Options in a variable, or spread, may hold an exclude list of their own.
   const hidden = opts.k !== 'obj' || opts.spread || opts.computed ? 1 : 0;
@@ -138,11 +143,18 @@ function prefixOf(project, found, app, declared, notes) {
     notes.push({ kind: 'TS_PREFIX_DECLARED', reason: `the profile's tsBackend.globalPrefix "${declared.globalPrefix}" is used, and the bootstrap sets "${written}"` });
   }
   const excludes = declared.globalPrefixExclude ? declaredExcludes(declared.globalPrefixExclude, notes)
-    : cfg.unread ? { matchers: [], unread: 1 } : excludesOf(opts, app);
+    : cfg.unread ? { matchers: [], unread: 1 } : excludesOf(opts, app, constantExcludes(project, cfg.call));
   if (excludes.unread > 0 && prefix !== '') {
     notes.push({ kind: 'TS_PREFIX_EXCLUDE_UNREAD', reason: `the global prefix "${prefix}" excludes ${excludes.unread} route pattern(s) this engine cannot read; a route one of them names is served without the prefix, so every route under it is shown with the prefix and graded HEURISTIC. Declare the list as tsBackend.globalPrefixExclude in the profile to read it` });
   }
   return { prefix, matchers: excludes.matchers, unreadExcludes: excludes.unread };
+}
+
+
+function constantExcludes(project, call) {
+  const opts = call?.staticArgs?.[1];
+  return opts?.k === 'object' && opts.props.exclude
+    ? constantEvaluator(project)(opts.props.exclude, call.file) : null;
 }
 
 /** URI versioning: `{uri:false}` when there is none, `{uri, prefix, defaultVersion}` when it is literal, `{unread}` when not. */
