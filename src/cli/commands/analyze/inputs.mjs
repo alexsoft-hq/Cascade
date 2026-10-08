@@ -19,7 +19,7 @@ import { createFactsStore, nodeFactsIo, validateIndex } from '../../../core/fact
 import { INCREMENTAL_ENGINE_VERSION } from '../../../core/incremental.mjs';
 import { planIncremental, underAny, MODE_COLD } from '../../../core/invalidate.mjs';
 import { selectLanes } from '../../../core/lanes.mjs';
-import { findJpaNamingStrategies } from '../../../core/springconfig.mjs';
+import { findJpaImplicitNamingStrategies, findJpaNamingStrategies } from '../../../core/springconfig.mjs';
 import { springConfigFilesBeside } from '../../external_sources.mjs';
 import { loadManifest } from '../../../core/manifest.mjs';
 import { profileDiagnostics, sqlDialectOf } from '../../../core/profile.mjs';
@@ -451,9 +451,8 @@ export function incrementalPlan(ctx, { root, out, profile, manifest, resolved, s
  * theirs.
  * @param {string[]} javaSrc  absolute Java source roots
  * @param {string} root  the analyzed root, which file paths are said relative to
- * @param {Object[]|null} [diagnostics]
  */
-export function jpaNamingConfigured(javaSrc, root, diagnostics = null) {
+function springConfigTextBeside(javaSrc, root) {
   const files = [];
   for (const src of [...new Set((javaSrc ?? []).map((p) => path.resolve(p)))].sort()) {
     let beside = [];
@@ -462,5 +461,14 @@ export function jpaNamingConfigured(javaSrc, root, diagnostics = null) {
       try { files.push({ path: path.relative(root, abs).split(path.sep).join('/'), text: fs.readFileSync(abs, 'utf8') }); } catch { /* unreadable: nothing declared by it */ }
     }
   }
-  return findJpaNamingStrategies(files, diagnostics);
+  return files;
+}
+
+export function jpaNamingConfigured(javaSrc, root, diagnostics = null) {
+  return findJpaNamingStrategies(springConfigTextBeside(javaSrc, root), diagnostics);
+}
+
+/** The same reading, for the implicit naming strategy (RM67-J7): findJpaImplicitNamingStrategies over the same Spring configuration. */
+export function jpaImplicitNamingConfigured(javaSrc, root, diagnostics = null) {
+  return findJpaImplicitNamingStrategies(springConfigTextBeside(javaSrc, root), diagnostics);
 }

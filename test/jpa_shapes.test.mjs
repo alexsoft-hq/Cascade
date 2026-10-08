@@ -186,12 +186,23 @@ function ownerAndTags(attribute, tagAttributes = []) {
 
 test('jpa_default_join_table_follows_spring_implicit_naming: the owning table, then the attribute', () => {
   const g = G();
-  addJpaFacts(g, ownerAndTags(attr('specialTags', { typeSimple: 'Set', typeArgSimple: 'Tag', relation: 'manyToMany' })), DECLARED);
+  const stats = addJpaFacts(g, ownerAndTags(attr('specialTags', { typeSimple: 'Set', typeArgSimple: 'Tag', relation: 'manyToMany' })), DECLARED);
   assert.ok(g.nodes.has(tableId('owners_special_tags')), 'SpringImplicitNamingStrategy: owners + _ + specialTags, then snake case');
   assert.equal(g.nodes.has(tableId('owner_tag')), false);
   assert.ok(g.nodes.has(colId('owners_special_tags', 'owner_id')), 'unidirectional: the owning entity\'s name, _, its key');
   assert.ok(g.nodes.has(colId('owners_special_tags', 'special_tags_id')), 'the attribute\'s name, _, the target\'s key');
-  assert.equal(joined(g, 'owners', 'owners_special_tags').grade, 'EXACT');
+  // RM67-J7: DECLARED states jpa.namingStrategy, the PHYSICAL strategy, only.
+  // The table's name also rests on the IMPLICIT strategy (owning table + attribute
+  // vs. the two tables spell it differently here), which nothing declares or
+  // configures, so it stays HEURISTIC and the gap is said on its own.
+  assert.equal(joined(g, 'owners', 'owners_special_tags').grade, 'HEURISTIC');
+  assert.match(stats.naming.diagnostics.find((d) => d.kind === 'JPA_IMPLICIT_NAMING_ASSUMED').reason, /declare jpa\.implicitNamingStrategy/);
+  // Declaring jpa.implicitNamingStrategy settles which one runs, and the name is EXACT.
+  const g1b = G();
+  const settled = addJpaFacts(g1b, ownerAndTags(attr('specialTags', { typeSimple: 'Set', typeArgSimple: 'Tag', relation: 'manyToMany' })),
+    { ...DECLARED, implicitNamingStrategy: 'spring' });
+  assert.equal(joined(g1b, 'owners', 'owners_special_tags').grade, 'EXACT');
+  assert.deepEqual(settled.naming.diagnostics, []);
   // Bidirectional: the owning side's column is named by the inverse attribute (JPA 2.10.4).
   const g2 = G();
   addJpaFacts(g2, ownerAndTags(
@@ -200,7 +211,10 @@ test('jpa_default_join_table_follows_spring_implicit_naming: the owning table, t
   ), DECLARED);
   assert.ok(g2.nodes.has(colId('owners_tags', 'owners_id')));
   assert.ok(g2.nodes.has(colId('owners_tags', 'tags_id')));
-  // Undeclared naming: the same names, HEURISTIC.
+  // Named alike either way (the attribute IS "tags", the target table too), so
+  // the implicit strategy's own gap never shows: EXACT even though it is undeclared.
+  assert.equal(joined(g2, 'owners', 'owners_tags').grade, 'EXACT');
+  // Undeclared naming altogether: the physical strategy alone already caps it HEURISTIC.
   const g3 = G();
   addJpaFacts(g3, ownerAndTags(attr('tags', { typeSimple: 'Set', typeArgSimple: 'Tag', relation: 'manyToMany' })));
   assert.equal(joined(g3, 'owners', 'owners_tags').grade, 'HEURISTIC');

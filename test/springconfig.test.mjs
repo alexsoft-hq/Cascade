@@ -4,7 +4,7 @@ import {
   findServiceNames, findGatewayRoutes, findExternalConfigImports, looksLikeSpringConfigFile,
   springConfigEntries, resolvePlaceholder, frontPrefixOf, backPrefixOf, serviceOfUri,
   findViewResolvers, relaxedKey, findXmlViewResolvers, findDbTypeDeclarations,
-  looksLikeSpringBeansXml, springBeansOf, findJpaNamingStrategies,
+  looksLikeSpringBeansXml, springBeansOf, findJpaNamingStrategies, findJpaImplicitNamingStrategies,
 } from '../src/core/springconfig.mjs';
 import { SQL_DIALECT_ALIASES } from '../src/core/profile.mjs';
 
@@ -662,4 +662,45 @@ test('a naming strategy that applies only under a profile is marked conditional,
     ['b', 'spring-snake-case', false],
     ['b', 'identity', true],
   ], 'the kebab-case spelling of a map key under spring.jpa.properties is not the property Hibernate reads');
+});
+
+test('the JPA IMPLICIT naming configuration supports Spring and JPA, and reports legacy/component strategies as unmodelled (RM67-J7)', () => {
+  const diagnostics = [];
+  const found = findJpaImplicitNamingStrategies([
+    { path: 'app/src/main/resources/application.properties', text: 'spring.jpa.hibernate.naming.implicit-strategy=org.springframework.boot.orm.jpa.hibernate.SpringImplicitNamingStrategy\n' },
+    { path: 'svc/src/main/resources/application.yml', text: 'spring:\n  jpa:\n    hibernate:\n      naming:\n        implicitStrategy: org.hibernate.boot.model.naming.ImplicitNamingStrategyLegacyJpaImpl\n' },
+    { path: 'four/src/main/resources/application.properties', text: 'spring.jpa.hibernate.naming.implicit-strategy=org.hibernate.boot.model.naming.ImplicitNamingStrategyComponentPathImpl\n' },
+    { path: 'hbm/src/main/resources/application.properties', text: 'spring.jpa.hibernate.naming.implicit-strategy=org.hibernate.boot.model.naming.ImplicitNamingStrategyLegacyHbmImpl\n' },
+    { path: 'boot4/src/main/resources/application.properties', text: 'spring.jpa.hibernate.naming.implicit-strategy=org.springframework.boot.hibernate.SpringImplicitNamingStrategy\n' },
+    { path: 'old/src/main/resources/application.properties', text: 'spring.jpa.properties.hibernate.implicit_naming_strategy=org.hibernate.boot.model.naming.ImplicitNamingStrategyJpaCompliantImpl\n' },
+    { path: 'own/src/main/resources/application.properties', text: 'spring.jpa.hibernate.naming.implicit-strategy=com.example.OurNaming\n' },
+    // Strategy aliases are not implemented by this reader.
+    { path: 'short/src/main/resources/application.properties', text: 'spring.jpa.properties.hibernate.implicit_naming_strategy=legacy-jpa\n' },
+  ], diagnostics);
+  assert.deepEqual(found.map((f) => [f.file.split('/')[0], f.strategy]), [
+    ['app', 'spring'],
+    ['boot4', 'spring'],
+    ['four', null],
+    ['hbm', null],
+    ['old', 'jpa-compliant'],
+    ['own', null],
+    ['short', null],
+    ['svc', null],
+  ]);
+  assert.deepEqual(diagnostics.map((d) => [d.kind, d.path]),
+    ['svc/src/main/resources/application.yml', 'four/src/main/resources/application.properties', 'hbm/src/main/resources/application.properties', 'own/src/main/resources/application.properties', 'short/src/main/resources/application.properties'].map((file) => ['JPA_NAMING_STRATEGY_UNMODELLED', file]));
+  assert.ok(diagnostics.every((d) => /HEURISTIC.*verify the runtime strategy.*jpa\.implicitNamingStrategy/.test(d.reason)));
+});
+
+test('implicit naming accepts relaxed Boot keys but only the verbatim Hibernate passthrough key', () => {
+  const cls = 'org.hibernate.boot.model.naming.ImplicitNamingStrategyJpaCompliantImpl';
+  const found = findJpaImplicitNamingStrategies([
+    { path: 'application.properties', text: `spring.jpa.hibernate.naming.implicitStrategy=${cls}\nspring.jpa.properties.hibernate.implicit_naming_strategy=${cls}\nspring.jpa.properties.hibernate.implicit-naming-strategy=${cls}\n` },
+    { path: 'application-dev.yml', text: `spring.jpa.hibernate.naming.implicit-strategy: ${cls}\n` },
+  ]);
+  assert.deepEqual(found.map((f) => [f.file, f.line, f.via, f.conditional]), [
+    ['application-dev.yml', 1, 'boot', true],
+    ['application.properties', 1, 'boot', false],
+    ['application.properties', 2, 'passthrough', false],
+  ]);
 });

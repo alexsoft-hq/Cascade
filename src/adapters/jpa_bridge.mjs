@@ -1372,7 +1372,7 @@ export function addJpaFacts(g, javaFacts, opts = {}) {
   // A name the ENGINE derived is HEURISTIC unless the project declared the rule
   // it was derived by. A name the SOURCE wrote down goes through the rule too,
   // and is EXACT where every rule spells it alike (`explicitName`).
-  const derivedGrade = declared ? 'EXACT' : 'HEURISTIC';
+  const derivedGrade = declared && !plan.implicitUnmodelled ? 'EXACT' : 'HEURISTIC';
   const namingEvidence = plan.evidence;
   const schema = opts.schema ?? null;
 

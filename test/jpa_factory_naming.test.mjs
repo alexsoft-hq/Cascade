@@ -25,6 +25,11 @@ import { xmlFactoriesIn } from '../src/core/rules/kinds/jpa_entity_manager_facto
 import { codeSettingDiagnostics } from '../src/core/code_settings.mjs';
 import { discover } from '../src/core/discover.mjs';
 import { DISCOVER_IO } from '../src/cli/env.mjs';
+import { findJpaImplicitNamingStrategies } from '../src/core/springconfig.mjs';
+import { jpaImplicitNamingOf } from '../src/core/lanes.mjs';
+import {
+  KEYS_DIGESTED_WHEN_SET, PROFILE_KEY_CONSUMERS, ProfileError, digestedProfile, normalizeProfile, validateProfile,
+} from '../src/core/profile.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
 const SKIP = 'no JDK found: JAVA_HOME is unset and no javac on PATH, see docs/setup/java-lane.md';
@@ -191,6 +196,38 @@ public class NamingConfig {
   assert.equal(r.column('owners_tags.owner_id'), 'HEURISTIC', 'the join table\'s name rests on a setting code can change');
   assert.equal(r.column('owners.id'), 'EXACT', 'the physical strategy is declared');
   assert.ok(notes(r).some((n) => /implicit-naming-set-in-code/.test(n) && /p\/NamingConfig\.java:10/.test(n)), notes(r).join('\n'));
+  // The profile settles the implicit strategy even when a code setting was read.
+  for (const [implicitNamingStrategy, table] of [['spring', 'owners_special_tags'], ['jpa-compliant', 'owners_tags']]) {
+    const settled = jpaRun(t, { 'p/Owner.java': owner, 'p/Tag.java': tag, 'p/NamingConfig.java': naming },
+      { namingStrategy: 'spring-snake-case', implicitNamingStrategy });
+    assert.equal(settled.stats.naming.implicit, implicitNamingStrategy);
+    assert.equal(settled.column(`${table}.owner_id`), 'EXACT');
+    assert.equal(settled.column(`${table}.special_tags_id`), 'EXACT');
+    assert.deepEqual(settled.g.edges.filter((e) => e.type === 'JOINS').map((e) => e.grade), ['EXACT', 'EXACT']);
+    assert.equal(settled.stats.naming.implicitNote, null, 'a declared implicit strategy leaves no uncertainty note');
+    assert.ok(!notes(settled).some((n) => /implicit-naming-set-in-code/.test(n)), notes(settled).join('\n'));
+    assert.deepEqual(settled.stats.naming.diagnostics, []);
+  }
+});
+
+test('a declared physical strategy alone leaves a default join table\'s name resting on the assumed implicit one, said and fixed by jpa.implicitNamingStrategy (RM67-J7)', (t) => {
+  const owner = `${J} @Entity @Table(name = "owners") public class Owner { @Id Long id; @ManyToMany Set<Tag> specialTags; }`;
+  const tag = `${J} @Entity @Table(name = "tags") public class Tag { @Id Long id; }`;
+  // A hand-built factory: the implicit default is jpa-compliant (the two tables), not sure until declared.
+  const hand = jpaRun(t, { 'p/Owner.java': owner, 'p/Tag.java': tag, 'p/DatabaseConfig.java': NEW_FACTORY }, { namingStrategy: 'spring-snake-case' });
+  if (!hand) { t.skip(SKIP); return; }
+  assert.ok(hand.tables.includes('owners_tags'), hand.tables.join(' '));
+  assert.equal(hand.column('owners_tags.owner_id'), 'HEURISTIC', 'the physical strategy is declared, but the implicit one is only assumed');
+  const said = diagnosticsOf(hand).find((d) => d.startsWith('JPA_IMPLICIT_NAMING_ASSUMED'));
+  assert.match(said, /jpa\.namingStrategy states the physical strategy only/);
+  assert.match(said, /the two tables/);
+  assert.match(said, /nothing declares or configures it/);
+  assert.equal(hand.stats.naming.diagnostics.find((d) => d.kind === 'JPA_IMPLICIT_NAMING_ASSUMED').key, 'jpa.implicitNamingStrategy');
+  // Declared, the join table is EXACT and the gap is gone.
+  const settled = jpaRun(t, { 'p/Owner.java': owner, 'p/Tag.java': tag, 'p/DatabaseConfig.java': NEW_FACTORY },
+    { namingStrategy: 'spring-snake-case', implicitNamingStrategy: 'jpa-compliant' });
+  assert.equal(settled.column('owners_tags.owner_id'), 'EXACT');
+  assert.deepEqual(settled.stats.naming.diagnostics, []);
 });
 
 // ---------------------------------------------------------------------------
@@ -240,10 +277,15 @@ test('a naming property whose class this engine does not model is said, and the 
   assert.equal(r.stats.namingStrategy, 'identity', 'Hibernate\'s own, as the hand-built factory would run');
   assert.equal(r.column('AGENT.hostName'), 'HEURISTIC');
   assert.match(diagnosticsOf(r).join('\n'), /SETTING_IN_CODE p\/DataConfiguration\.java:15 sets hibernate\.physical_naming_strategy to com\.acme\.OwnNamingStrategy:/);
-  // Declared, the profile's word is taken and nothing is said.
+  // Declared, the profile's word is taken and nothing more is said about the PHYSICAL
+  // strategy; the implicit one is still undeclared (RM67-J7), so that gap is said on its own.
   const declared = jpaRun(t, { 'p/AgentInfo.java': AGENT, 'p/DataConfiguration.java': withNamingProperty('"com.acme.OwnNamingStrategy"') }, { namingStrategy: 'identity' });
-  assert.deepEqual(declared.stats.naming.diagnostics, []);
+  assert.deepEqual(declared.stats.naming.diagnostics.map((d) => d.kind), ['JPA_IMPLICIT_NAMING_ASSUMED']);
   assert.equal(declared.column('AGENT.hostName'), 'EXACT');
+  // Declaring both leaves nothing to say.
+  const both = jpaRun(t, { 'p/AgentInfo.java': AGENT, 'p/DataConfiguration.java': withNamingProperty('"com.acme.OwnNamingStrategy"') },
+    { namingStrategy: 'identity', implicitNamingStrategy: 'jpa-compliant' });
+  assert.deepEqual(both.stats.naming.diagnostics, []);
 });
 
 test('a naming strategy handed to a setter is a setting made in code, said under jpa.namingStrategy while it is undeclared', (t) => {
@@ -329,6 +371,98 @@ test('the configuration\'s naming reaches a builder-made factory by spring.jpa.p
   const none = jpaRun(t, { 'p/Comment.java': COMMENT }, { configuredNaming: configured('boot') });
   assert.equal(none.stats.naming.config, 'declared');
   assert.equal(none.column('Comment.createdBy'), 'EXACT');
+});
+
+test('the configuration\'s IMPLICIT naming reaches a builder-made factory by spring.jpa.properties always, and by Boot\'s own key only from 3.4 (RM67-J7)', (t) => {
+  const owner = `${J} @Entity @Table(name = "owners") public class Owner { @Id Long id; @ManyToMany Set<Tag> specialTags; }`;
+  const tag = `${J} @Entity @Table(name = "tags") public class Tag { @Id Long id; }`;
+  const configuredImplicit = (via) => ({
+    strategy: 'jpa-compliant', from: 'configuration', files: ['src/main/resources/application.yml'],
+    classNames: ['org.hibernate.boot.model.naming.ImplicitNamingStrategyJpaCompliantImpl'], vias: [via],
+  });
+  const boot = jpaRun(t, { 'p/Owner.java': owner, 'p/Tag.java': tag, 'p/BoardServiceJpaConfig.java': BUILDER_FACTORY },
+    { namingStrategy: 'spring-snake-case', configuredImplicitNaming: configuredImplicit('boot') });
+  if (!boot) { t.skip(SKIP); return; }
+  assert.ok(boot.tables.includes('owners_tags'), boot.tables.join(' '));
+  assert.equal(boot.column('owners_tags.owner_id'), 'HEURISTIC', 'applied, but only from Spring Boot 3.4, so still a guess');
+  assert.match(diagnosticsOf(boot).find((d) => d.startsWith('JPA_IMPLICIT_NAMING_ASSUMED')), /only from Spring Boot 3\.4/);
+  const passthrough = jpaRun(t, { 'p/Owner.java': owner, 'p/Tag.java': tag, 'p/BoardServiceJpaConfig.java': BUILDER_FACTORY },
+    { namingStrategy: 'spring-snake-case', configuredImplicitNaming: configuredImplicit('passthrough') });
+  assert.equal(passthrough.column('owners_tags.owner_id'), 'EXACT');
+  assert.deepEqual(passthrough.stats.naming.diagnostics, []);
+  for (const via of ['boot', 'passthrough']) {
+    const configuredImplicitNaming = configuredImplicit(via);
+    const none = jpaRun(t, { 'p/Owner.java': owner, 'p/Tag.java': tag },
+      { namingStrategy: 'spring-snake-case', configuredImplicitNaming });
+    assert.equal(none.column('owners_tags.owner_id'), 'EXACT', `${via} reaches Boot's own factory`);
+    assert.deepEqual(none.stats.naming.diagnostics, []);
+    const hand = jpaRun(t, { 'p/Owner.java': owner, 'p/Tag.java': tag, 'p/DatabaseConfig.java': NEW_FACTORY },
+      { namingStrategy: 'spring-snake-case', configuredImplicitNaming: { ...configuredImplicitNaming, strategy: 'spring' } });
+    assert.equal(hand.column('owners_tags.owner_id'), 'HEURISTIC', `${via} does not reach a hand-built factory`);
+    assert.match(diagnosticsOf(hand).join('\n'), /does not reach a factory the project builds itself/);
+  }
+});
+
+test('unsupported implicit strategies remain visible and cannot declare a default join table EXACT', (t) => {
+  const sources = {
+    'p/Owner.java': `${J} @Entity @Table(name = "owners") public class Owner { @Id Long id; @ManyToMany Set<Tag> specialTags; }`,
+    'p/Tag.java': `${J} @Entity @Table(name = "tags") public class Tag { @Id Long id; }`,
+  };
+  for (const strategy of ['LegacyJpa', 'LegacyHbm', 'ComponentPath']) {
+    const diagnostics = [];
+    const found = findJpaImplicitNamingStrategies([{ path: 'application.properties',
+      text: `spring.jpa.hibernate.naming.implicit-strategy=org.hibernate.boot.model.naming.ImplicitNamingStrategy${strategy}Impl\n` }], diagnostics);
+    const configuredImplicitNaming = jpaImplicitNamingOf({}, found);
+    assert.equal(configuredImplicitNaming.from, 'unreadable');
+    assert.match(diagnostics[0].reason, /does not model.*HEURISTIC.*jpa\.implicitNamingStrategy/);
+    const r = jpaRun(t, sources, { namingStrategy: 'spring-snake-case', configuredImplicitNaming });
+    if (!r) { t.skip(SKIP); return; }
+    assert.equal(r.column('owners_special_tags.owner_id'), 'HEURISTIC');
+    assert.match(diagnosticsOf(r).join('\n'), /unsupported or cannot be selected unconditionally.*Default table, basic column, embedded column and join column names.*HEURISTIC/);
+  }
+});
+
+test('an unsupported implicit strategy caps derived names but preserves explicit names, unless ignored or overridden', (t) => {
+  const sources = {
+    'p/Owner.java': `${J} @Entity @Table(name = "owners") public class Owner { @Id @Column(name="id") Long id;
+      @Embedded Addr address; @ManyToOne Target target; @ManyToOne @JoinColumn(name="written_target") Target namedTarget;
+      String basic; @Column(name="written_name") String written;
+      @ManyToMany Set<Target> targets; }`,
+    'p/Addr.java': `${J} @Embeddable public class Addr { String city; @Column(name="written_zip") String zip; }`,
+    'p/Target.java': `${J} @Entity @Table(name="targets") public class Target { @Id @Column(name="id") Long id; }`,
+    'p/DefaultTable.java': `${J} @Entity public class DefaultTable { @Id @Column(name="id") Long id; }`,
+  };
+  for (const strategy of ['ComponentPath', 'LegacyHbm']) {
+    const className = `org.hibernate.boot.model.naming.ImplicitNamingStrategy${strategy}Impl`;
+    const configuredImplicitNaming = jpaImplicitNamingOf({}, findJpaImplicitNamingStrategies([
+      { path: 'application.properties', text: `spring.jpa.hibernate.naming.implicit-strategy=${className}\n` },
+    ]));
+    const configured = { namingStrategy: 'identity', configuredImplicitNaming };
+    const code = { ...sources, 'p/NamingConfig.java': `package p;
+      import org.springframework.context.annotation.Bean;
+      import org.springframework.boot.autoconfigure.orm.jpa.HibernatePropertiesCustomizer;
+      public class NamingConfig { @Bean HibernatePropertiesCustomizer naming() {
+        return props -> props.put("hibernate.implicit_naming_strategy", "${className}");
+      } }` };
+    for (const [files, opts] of [[sources, configured], [code, { namingStrategy: 'identity' }]]) {
+      const r = jpaRun(t, files, opts);
+      if (!r) { t.skip(SKIP); return; }
+      for (const col of ['owners.city', 'owners.basic', 'owners.target_id', 'DefaultTable.id', 'owners_targets.Owner_id']) {
+        assert.equal(r.column(col), 'HEURISTIC', `${strategy} can alter ${col}`);
+      }
+      for (const col of ['owners.id', 'owners.written_name', 'owners.written_zip', 'owners.written_target']) {
+        assert.equal(r.column(col), 'EXACT', `${strategy} does not alter explicit ${col}`);
+      }
+      assert.match(diagnosticsOf(r).join('\n'), /implicit naming strategy is unsupported.*HEURISTIC/);
+      const settled = jpaRun(t, files, { ...opts, implicitNamingStrategy: 'jpa-compliant' });
+      for (const col of ['owners.city', 'owners.basic', 'owners.target_id', 'DefaultTable.id']) assert.equal(settled.column(col), 'EXACT');
+      assert.deepEqual(settled.stats.naming.diagnostics, []);
+    }
+    const ignored = jpaRun(t, { ...sources, 'p/DatabaseConfig.java': NEW_FACTORY }, configured);
+    assert.equal(ignored.column('owners.city'), 'EXACT', 'Boot configuration does not reach a hand-built factory');
+    assert.equal(ignored.column('owners.target_id'), 'EXACT');
+    assert.match(diagnosticsOf(ignored).join('\n'), /does not reach a factory the project builds itself/);
+  }
 });
 
 test('the configuration\'s naming does not reach a factory built by hand, and the run says it was not applied', (t) => {
@@ -427,4 +561,25 @@ test('init writes no naming for the yml key, and analyze does not apply it to a 
   assert.match(stderr, /JPA_NAMING_FROM_FACTORY jpa\.namingStrategy: .*src\/main\/java\/p\/DatabaseConfig\.java:7.*CamelCaseToUnderscoresNamingStrategy in src\/main\/resources\/application\.yml, which does not reach a factory the project builds itself/);
   assert.equal(pack.meta.axes.jpa.status, 'degraded');
   assert.match(pack.meta.axes.jpa.reason, /Hibernate's own default, which keeps a name as written, because the project builds its own EntityManagerFactory \(src\/main\/java\/p\/DatabaseConfig\.java:7\)/);
+});
+
+// ---------------------------------------------------------------------------
+// the profile key itself (RM67-J7)
+// ---------------------------------------------------------------------------
+
+test('jpa.implicitNamingStrategy: a consumed key, spring or jpa-compliant, out of the digest until set', () => {
+  const entry = PROFILE_KEY_CONSUMERS['jpa.implicitNamingStrategy'];
+  assert.equal(entry.status, 'consumed');
+  assert.equal(entry.where, 'src/adapters/jpa_naming.mjs');
+  assert.doesNotThrow(() => validateProfile({ jpa: { implicitNamingStrategy: 'spring' } }));
+  assert.doesNotThrow(() => validateProfile({ jpa: { implicitNamingStrategy: 'jpa-compliant' } }));
+  assert.doesNotThrow(() => validateProfile({ jpa: { implicitNamingStrategy: null } }));
+  assert.throws(() => validateProfile({ jpa: { implicitNamingStrategy: 'legacy-jpa' } }),
+    (e) => e instanceof ProfileError && /must be null or one of spring\|jpa-compliant/.test(e.message),
+    'a Hibernate class or short name this engine has not proven identical is not accepted as a new bucket');
+  // Out of the digest at its default, the same promise tsBackend.typeorm.type keeps (KEYS_DIGESTED_WHEN_SET).
+  assert.ok(KEYS_DIGESTED_WHEN_SET.includes('jpa.implicitNamingStrategy'));
+  assert.deepEqual(digestedProfile(normalizeProfile({})).jpa, { namingStrategy: null }, 'a pack sealed before this key existed keeps its digest');
+  assert.deepEqual(digestedProfile(normalizeProfile({ jpa: { implicitNamingStrategy: 'spring' } })).jpa,
+    { namingStrategy: null, implicitNamingStrategy: 'spring' });
 });

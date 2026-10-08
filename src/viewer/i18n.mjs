@@ -1519,6 +1519,7 @@ export const VIEWER_STRINGS = {
     'diag.title.GATEWAY_ROUTES_KEPT': 'gateway routes kept as the profile declares them',
     'diag.title.GATE_STRICT': 'the calibration gate needs a sealed baseline',
     'diag.title.JPA_NAMING_FROM_CONFIGURATION': 'JPA naming read from the project\'s configuration',
+    'diag.title.JPA_IMPLICIT_NAMING_ASSUMED': 'a default join table\'s name rests on an assumed strategy',
     'diag.title.JPA_NAMING_FROM_FACTORY': 'JPA naming set by how the factory is built',
     'diag.title.JPA_NAMING_UNREADABLE': 'a JPA naming strategy this engine cannot apply',
     'diag.title.MAPPER_ALTERNATIVES_KEPT': 'mapper vendor choice kept as the profile declares it',

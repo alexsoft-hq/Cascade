@@ -28,7 +28,7 @@ import { buildChangeset, changedFiles } from '../core/changeset.mjs';
 import { createFactsStore, nodeFactsIo, validateIndex } from '../core/facts_store.mjs';
 import { INCREMENTAL_ENGINE_VERSION } from '../core/incremental.mjs';
 import { underAny } from '../core/invalidate.mjs';
-import { jpaNamingOf, openapiDeclarationsOf, screenAxisOf, sqlLaneArgs } from '../core/lanes.mjs';
+import { jpaImplicitNamingOf, jpaNamingOf, openapiDeclarationsOf, screenAxisOf, sqlLaneArgs } from '../core/lanes.mjs';
 import { overlayGraph, classifyDirtyFiles, classifyTsDirtyFiles, ddlFilesOf } from '../core/overlay.mjs';
 import { assertOverlayable, runOverlayLanes, runOverlayTsLane, ephemeralIo, OverlayStaleError } from '../core/overlay_lanes.mjs';
 import { overlaySession } from '../core/overlay_session.mjs';
@@ -40,7 +40,7 @@ import {
 } from './env.mjs';
 import { LANE_BRIDGES, runJavaLane, runWebLane, webPackagesRead } from './lanes_run.mjs';
 import { tsLaneInputFiles, tsLaneOptions, tsLaneRunners } from './ts_inputs.mjs';
-import { jpaNamingConfigured } from './commands/analyze/inputs.mjs';
+import { jpaImplicitNamingConfigured, jpaNamingConfigured } from './commands/analyze/inputs.mjs';
 import { catalogLaneInputs, jpaOptions, mybatisPlusOptions, whichJavaLanes } from './lane_options.mjs';
 import { annotationStatementsOf, lineageOfStatements, wrapperFragmentLineageOf } from './java_sql.mjs';
 import { safeHash, sha256File } from './state.mjs';
@@ -357,7 +357,9 @@ function overlayJavaLanes({ profile, sqlArgs, selection, rootAbs, idx, store, ru
   return (javaFacts) => {
     if (javaRootsAbs.length === 0) return { jpa: null, mybatisPlus: null, lineage: [] };
     const { runJpa, runMp } = whichJavaLanes(prof, javaFacts, javaRootsAbs);
-    const jpa = runJpa ? jpaOptions(prof, sqlArgs, jpaNamingOf(prof, jpaNamingConfigured(javaRootsAbs, rootAbs)), baseJpa) : null;
+    const jpaNaming = jpaNamingOf(prof, jpaNamingConfigured(javaRootsAbs, rootAbs));
+    const jpaImplicitNaming = jpaImplicitNamingOf(prof, jpaImplicitNamingConfigured(javaRootsAbs, rootAbs));
+    const jpa = runJpa ? jpaOptions(prof, sqlArgs, jpaNaming, jpaImplicitNaming, baseJpa) : null;
     const statements = annotationStatementsOf({ javaFacts, statementRecords, runpy, requirePython: needPy, mybatisArgs: sqlArgs.mybatisArgs });
     const lineage = lineageOfStatements({ statements, ...lineageCtx }).lineageRecords;
     if (!runMp) return { jpa, mybatisPlus: null, lineage };

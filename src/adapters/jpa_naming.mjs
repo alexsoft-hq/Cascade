@@ -67,22 +67,40 @@ function configReach(configured, kind) {
 }
 
 /**
- * THE NAMING A RUN SPELLS ITS JPA NAMES BY.
- * @param {{declared:(string|null), configured:(object|null), factory:object}} a
- *   the profile's jpa.namingStrategy, what `jpaNamingOf` read from the
- *   configuration (src/core/lanes.mjs), and `readFactoryKind`'s answer
- * @returns {{strategy:string, declared:boolean, implicit:string, implicitSure:boolean, evidence:string,
- *            kind:string, config:(string|null), physicalInCode:object, implicitInCode:object}}
+ * THE IMPLICIT STRATEGY THIS RUN IS SURE OF, and how sure: declared (the
+ * profile's jpa.implicitNamingStrategy, or a configuration that reaches the
+ * factory the same way `configReach` decides for the physical one), else a
+ * setting made in code (never sure: a property can be set again elsewhere),
+ * else the factory kind's default, not sure either (RM67-J7 — this is the gap
+ * `jpa.namingStrategy` alone left open: it states the physical strategy only).
  */
-export function namingPlan({ declared = null, configured = null, factory }) {
+function implicitPlan(declared, configured, factory, base) {
+  const implicitInCode = inCode(factory.naming, 'implicit');
+  const config = configReach(configured, factory.kind);
+  if (declared != null) return { implicit: declared, implicitSure: true, implicitInCode, implicitConfig: config };
+  if (implicitInCode.sites.length > 0) return { implicit: implicitInCode.strategy ?? base, implicitSure: false, implicitUnmodelled: implicitInCode.sites.some((s) => !s.strategy), implicitInCode, implicitConfig: config };
+  if (config === 'declared') return { implicit: configured.strategy, implicitSure: true, implicitInCode, implicitConfig: config };
+  if (config === 'assumed') return { implicit: configured.strategy, implicitSure: false, implicitInCode, implicitConfig: config };
+  return { implicit: base, implicitSure: false, implicitUnmodelled: configured?.from === 'unreadable' && config !== 'ignored', implicitInCode, implicitConfig: config };
+}
+
+/**
+ * THE NAMING A RUN SPELLS ITS JPA NAMES BY.
+ * @param {{declared:(string|null), configured:(object|null), factory:object,
+ *          declaredImplicit:(string|null), configuredImplicit:(object|null)}} a
+ *   the profile's jpa.namingStrategy and jpa.implicitNamingStrategy, what
+ *   `jpaNamingOf`/`jpaImplicitNamingOf` read from the configuration
+ *   (src/core/lanes.mjs), and `readFactoryKind`'s answer
+ * @returns {{strategy:string, declared:boolean, implicit:string, implicitSure:boolean, evidence:string,
+ *            kind:string, config:(string|null), physicalInCode:object, implicitInCode:object, implicitConfig:(string|null)}}
+ */
+export function namingPlan({
+  declared = null, configured = null, factory, declaredImplicit = null, configuredImplicit = null,
+}) {
   const base = DEFAULTS[factory.kind];
   const physical = inCode(factory.naming, 'physical');
-  const implicit = inCode(factory.naming, 'implicit');
   const config = configReach(configured, factory.kind);
-  const plan = {
-    kind: factory.kind, config, physicalInCode: physical, implicitInCode: implicit,
-    implicit: implicit.strategy ?? base.implicit, implicitSure: implicit.sites.length === 0,
-  };
+  const plan = { kind: factory.kind, config, physicalInCode: physical, ...implicitPlan(declaredImplicit, configuredImplicit, factory, base.implicit) };
   if (declared != null) return { ...plan, strategy: declared, declared: true, evidence: 'declared' };
   const fromConfig = config === 'declared' || config === 'assumed' ? configured.strategy : null;
   // A setting made in code is applied after the configuration, so it wins over it, and is never the project's declared word.
@@ -100,19 +118,21 @@ export function namingPlan({ declared = null, configured = null, factory }) {
  * to, the clause the jpa axis says, the diagnostics, and the XML and service
  * files it was handed, which the working-tree overlay reads back).
  * @param {object[]} javaFacts
- * @param {{namingStrategy?:(string|null), configuredNaming?:(object|null), xmlFactories?:object[], serviceFiles?:object[], factoryRules?:object[]}} opts
+ * @param {{namingStrategy?:(string|null), configuredNaming?:(object|null), implicitNamingStrategy?:(string|null),
+ *          configuredImplicitNaming?:(object|null), xmlFactories?:object[], serviceFiles?:object[], factoryRules?:object[]}} opts
  */
 export function namingOf(javaFacts, opts = {}) {
   const factory = readFactoryKind(javaFacts, { rules: opts.factoryRules, xmlFactories: opts.xmlFactories ?? [] });
   const configured = opts.configuredNaming ?? null;
-  const plan = namingPlan({ declared: opts.namingStrategy ?? null, configured, factory });
+  const configuredImplicit = opts.configuredImplicitNaming ?? null;
+  const plan = namingPlan({ declared: opts.namingStrategy ?? null, configured, factory, declaredImplicit: opts.implicitNamingStrategy ?? null, configuredImplicit });
   return {
     plan,
     naming: {
       kind: plan.kind, evidence: plan.evidence, implicit: plan.implicit, config: plan.config,
       handBuilt: factory.handBuilt, builderMade: factory.builderMade, inCode: factory.naming,
       derivedBy: derivedBySaid(plan, factory, configured),
-      diagnostics: namingDiagnostics(plan, factory, configured),
+      diagnostics: namingDiagnostics(plan, factory, configured, configuredImplicit),
       implicitNote: implicitNoteOf(plan),
       inputs: { xmlFactories: opts.xmlFactories ?? [], serviceFiles: opts.serviceFiles ?? [], resourcesRead: opts.resourcesRead !== false },
     },
@@ -165,31 +185,67 @@ function configSaid(plan, configured) {
  * one: the join tables the mapping does not name. Null when nothing is open.
  */
 function implicitNoteOf(plan) {
-  if (plan.evidence !== 'declared' || plan.implicitInCode.sites.length === 0) return null;
-  return `${plan.implicitInCode.sites.map(inCodeSaid).join('; ')}. jpa.namingStrategy states the physical strategy only, so a join table the mapping does not name, where Spring Boot's and Hibernate's implicit strategies name it differently, is graded HEURISTIC`;
+  if (plan.evidence !== 'declared' || plan.implicitSure || plan.implicitInCode.sites.length === 0) return null;
+  return `${plan.implicitInCode.sites.map(inCodeSaid).join('; ')}. jpa.namingStrategy states the physical strategy only, so a join table the mapping does not name, where Spring Boot's and Hibernate's implicit strategies name it differently, is graded HEURISTIC; declare jpa.implicitNamingStrategy in the profile to settle it`;
+}
+
+/** What the implicit strategy rests on when nothing sets it in code: nothing at all, or a configuration that does not (fully) reach this factory. */
+function implicitRestsOn(plan, configuredImplicit) {
+  if (plan.implicitConfig === 'ignored') return `the configuration names one under spring.jpa.hibernate.naming.implicit-strategy or hibernate.implicit_naming_strategy, in ${configuredImplicit.files.join(', ')}, which does not reach a factory the project builds itself`;
+  if (plan.implicitConfig === 'assumed') return 'the configuration names it under spring.jpa.hibernate.naming.implicit-strategy, which reaches a builder-made factory only from Spring Boot 3.4';
+  if (configuredImplicit?.from === 'unreadable') return `the configuration in ${configuredImplicit.files.join(', ')} does not select a single supported implicit strategy unconditionally`;
+  return 'nothing declares or configures it';
 }
 
 /**
- * WHAT THE RUN SAYS ABOUT IT, as diagnostics under jpa.namingStrategy: the
- * factory that decided the assumption (JPA_NAMING_FROM_FACTORY), and each
- * naming property set in code or XML (SETTING_IN_CODE; a setter call is said by
- * the java.code-setting rule). Nothing when the profile declares the strategy.
+ * THE GAP A DECLARED PHYSICAL STRATEGY LEAVES OPEN (RM67-J7): a default join
+ * table's name also rests on the implicit strategy, and jpa.namingStrategy does
+ * not state that one. Said once, under jpa.implicitNamingStrategy, when nothing
+ * in code already explains it (`implicitNoteOf` does that).
  */
-export function namingDiagnostics(plan, factory, configured) {
-  if (plan.evidence === 'declared') return [];
+function implicitAssumedDiagnostic(plan, configuredImplicit) {
+  if (plan.implicitUnmodelled) return {
+    kind: 'JPA_IMPLICIT_NAMING_ASSUMED', severity: 'info', key: 'jpa.implicitNamingStrategy',
+    reason: `The implicit naming strategy is unsupported or cannot be selected unconditionally. Default table, basic column, embedded column and join column names use the assumed ${plan.implicit} spelling and are graded HEURISTIC. Written names still follow the physical strategy. Verify the runtime strategy before declaring jpa.implicitNamingStrategy as a supported strategy`,
+  };
+  if (!plan.declared || plan.implicitSure || plan.implicitInCode.sites.length > 0) return null;
+  const spelled = plan.implicit === 'jpa-compliant' ? 'the two tables' : 'the owning table and the attribute';
+  return {
+    kind: 'JPA_IMPLICIT_NAMING_ASSUMED', severity: 'info', key: 'jpa.implicitNamingStrategy',
+    reason: `jpa.namingStrategy states the physical strategy only. A default join table's name also rests on the implicit strategy, which this run assumes names it after ${spelled}, because ${implicitRestsOn(plan, configuredImplicit)}. Where the other known implicit strategy would spell such a name differently, it stays HEURISTIC; declare jpa.implicitNamingStrategy in the profile to settle it`,
+  };
+}
+
+/** The profile key a naming setting made in code is said under: implicit gets its own key now that one exists, physical still jpa.namingStrategy. */
+const codeSettingKey = (s) => (s.dimension === 'implicit' ? 'jpa.implicitNamingStrategy' : 'jpa.namingStrategy');
+
+/** One SETTING_IN_CODE diagnostic for a naming property or setter this run found in code or XML. */
+function settingInCodeDiagnostic(s) {
+  const key = codeSettingKey(s);
+  return {
+    kind: 'SETTING_IN_CODE', severity: 'warn', key,
+    reason: `${inCodeSaid(s)}: the factory it reaches names tables and columns by that ${s.dimension} strategy. A property can be set again elsewhere, so names derived by it are graded HEURISTIC. This engine does not read a setting made in code, so declare it as \`${key}\` in the profile (rule jpa.entity-manager-factories)`,
+  };
+}
+
+/**
+ * WHAT THE RUN SAYS ABOUT ITS NAMING: the factory that decided the physical
+ * assumption (JPA_NAMING_FROM_FACTORY), each naming property set in code or XML
+ * (SETTING_IN_CODE; a setter call is said by the java.code-setting rule), and,
+ * when the physical strategy is declared but the implicit one still rests on an
+ * assumption, that gap on its own (JPA_IMPLICIT_NAMING_ASSUMED, RM67-J7).
+ */
+export function namingDiagnostics(plan, factory, configured, configuredImplicit) {
+  if (plan.evidence === 'declared') {
+    const d = implicitAssumedDiagnostic(plan, configuredImplicit);
+    return d ? [d] : [];
+  }
   const out = [];
   if (plan.kind !== 'none') {
     const config = configSaid(plan, configured);
-    out.push({
-      kind: 'JPA_NAMING_FROM_FACTORY', severity: 'info', key: 'jpa.namingStrategy',
-      reason: `names the mapping did not spell out, and names it writes that the strategies spell differently, are spelled by ${derivedBySaid(plan, factory, configured)}${config ? `; ${config}` : ''}. They are graded HEURISTIC; declare jpa.namingStrategy in the profile to settle it`,
-    });
+    out.push({ kind: 'JPA_NAMING_FROM_FACTORY', severity: 'info', key: 'jpa.namingStrategy',
+      reason: `names the mapping did not spell out, and names it writes that the strategies spell differently, are spelled by ${derivedBySaid(plan, factory, configured)}${config ? `; ${config}` : ''}. They are graded HEURISTIC; declare jpa.namingStrategy in the profile to settle it` });
   }
-  for (const s of [...plan.physicalInCode.sites, ...plan.implicitInCode.sites]) {
-    out.push({
-      kind: 'SETTING_IN_CODE', severity: 'warn', key: 'jpa.namingStrategy',
-      reason: `${inCodeSaid(s)}: the factory it reaches names tables and columns by that ${s.dimension} strategy. A property can be set again elsewhere, so names derived by it are graded HEURISTIC. This engine does not read a setting made in code, so declare it as \`jpa.namingStrategy\` in the profile (rule jpa.entity-manager-factories)`,
-    });
-  }
+  for (const s of [...plan.physicalInCode.sites, ...plan.implicitInCode.sites]) out.push(settingInCodeDiagnostic(s));
   return out;
 }

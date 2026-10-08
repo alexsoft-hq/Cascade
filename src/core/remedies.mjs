@@ -32,6 +32,7 @@ export const REMEDY_EXAMPLES = Object.freeze({
   // The driver is in it (review 4, S-2): a catalog degraded because the driver is not known is fixed here too.
   'tsBackend.typeorm': '{ "namingStrategy": "snake", "entityPrefix": "", "type": "postgres" }',
   'jpa.namingStrategy': '"spring-snake-case"',
+  'jpa.implicitNamingStrategy': '"spring"',
   'mybatisPlus.namingStrategy': '"underscore"',
   pathPrefixes: '[{ "prefix": "/admin-api", "packages": "**.controller.admin.**" }]',
   gatewayRoutes: '{ "/dev-api": "" }',
@@ -84,6 +85,7 @@ export const DIAGNOSTIC_REMEDIES = Object.freeze({
   TS_APPS_FOUND: { action: 'declare', key: 'tsBackend.app' },
   JPA_NAMING_UNREADABLE: { action: 'declare', key: 'jpa.namingStrategy' },
   JPA_NAMING_FROM_FACTORY: { action: 'declare', key: 'jpa.namingStrategy' },
+  JPA_IMPLICIT_NAMING_ASSUMED: { action: 'declare', key: null },
   DISCOVERY_CAPPED: { action: 'flag', flag: '--ts-src', example: '--ts-src <app-root-dir>' },
   SETTING_IN_CODE: { action: 'declare', key: null },
   PREFIX_NOT_ON_CALLS: { action: 'declare', key: null },

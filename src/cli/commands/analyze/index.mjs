@@ -12,7 +12,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { addHarFacts, readHar } from '../../../adapters/har_bridge.mjs';
 import { symbolsSharedWithOtherLanes } from '../../../adapters/ts_bridge.mjs';
-import { sqlLaneArgs, declareAxes, screenAxisOf, serviceNamesOf, jpaNamingOf } from '../../../core/lanes.mjs';
+import { sqlLaneArgs, declareAxes, screenAxisOf, serviceNamesOf, jpaNamingOf, jpaImplicitNamingOf } from '../../../core/lanes.mjs';
 import { ENGINE_ROOT, SCRATCH, listMapperXml, noSqlPython, sqlPython } from '../../env.mjs';
 import { webPackagesRead } from '../../lanes_run.mjs';
 import { tsLaneOptions } from '../../ts_inputs.mjs';
@@ -30,7 +30,7 @@ import { codeSettingDiagnostics } from '../../../core/code_settings.mjs';
 import { catalogDiagnostics, catalogReadStats } from '../../../core/catalog_read.mjs';
 import { prefixNotOnCallsNotes, unusedPrefixNotes } from './prefix_notes.mjs';
 import { buildPack, lockDirFor, rejectRun, runGate, stateFiles, updateRegistry, writeArtifacts } from './write.mjs';
-import { analyzeTarget, incrementalPlan, jpaNamingConfigured, laneSelection, noteDirtyReached } from './inputs.mjs';
+import { analyzeTarget, incrementalPlan, jpaImplicitNamingConfigured, jpaNamingConfigured, laneSelection, noteDirtyReached } from './inputs.mjs';
 import { overlayInputsRecord } from '../../overlay_inputs.mjs';
 
 /**
@@ -46,6 +46,14 @@ function withJpaNaming(diagnostics, naming) {
     : { kind: 'JPA_NAMING_UNREADABLE', severity: 'info', reason: `the project's configuration names ${naming.classNames.join(', ')} in ${naming.files.join(', ')}, which is not one strategy this engine can apply, so names the mapping did not spell out stay HEURISTIC; declare jpa.namingStrategy in the profile to settle it` };
   const rest = diagnostics.filter((d) => !(d.kind === 'PROFILE_DEFAULT_ASSUMED' && d.key === 'jpa.namingStrategy'));
   return [...rest, { ...said, key: 'jpa.namingStrategy' }];
+}
+
+/** Both of this run's JPA naming strategies (RM67-J7): the physical one and the implicit one, each the profile's word or what the project's own configuration names. */
+function jpaNamingsOf(profile, javaSrc, root, diagnostics) {
+  return {
+    jpaNaming: jpaNamingOf(profile, jpaNamingConfigured(javaSrc, root, diagnostics)),
+    jpaImplicitNaming: jpaImplicitNamingOf(profile, jpaImplicitNamingConfigured(javaSrc, root, diagnostics)),
+  };
 }
 
 /**
@@ -83,7 +91,7 @@ function prepare(ctx) {
     flags, discovery, sel, ddls, ddl, snapshot, snapshotProvenance, snapshotSha256,
     mappers, javaSrc, webSrc, openapiFiles, harFiles, otelFiles, diagnostics: selected,
   } = laneSelection(ctx, { root, profile, resolved, diagnostics: profileFindings });
-  const jpaNaming = jpaNamingOf(profile, jpaNamingConfigured(javaSrc, root, selected));
+  const { jpaNaming, jpaImplicitNaming } = jpaNamingsOf(profile, javaSrc, root, selected);
   const diagnostics = withJpaNaming(selected, jpaNaming);
 
   sayNoSchemaFetched(profile, { ddls, snapshot, resolved, root });
@@ -130,7 +138,7 @@ function prepare(ctx) {
     resolved, out, root, profile, profileFile, manifest, diagnostics, flags, discovery, sel,
     ddls, ddl, snapshot, snapshotProvenance, snapshotSha256, mappers, javaSrc, webSrc,
     openapiFiles, harFiles, otelFiles, serviceNames, screenGate, py, runpy, sqlArgs,
-    selectionRel, prevIndex, base, changed, baseCommit, projectId, plan, store, relOf, absOf, jpaNaming,
+    selectionRel, prevIndex, base, changed, baseCommit, projectId, plan, store, relOf, absOf, jpaNaming, jpaImplicitNaming,
   };
 }
 
@@ -194,7 +202,7 @@ function sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp, op
 function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJpa, runMp, mpOpts, fragmentLineage }) {
   const {
     root, profile, discovery, sel, ddls, snapshot, mappers, javaSrc, webSrc,
-    openapiFiles, harFiles, otelFiles, screenGate, sqlArgs, resolved, base, relOf, diagnostics, manifest, jpaNaming,
+    openapiFiles, harFiles, otelFiles, screenGate, sqlArgs, resolved, base, relOf, diagnostics, manifest, jpaNaming, jpaImplicitNaming,
   } = prepared;
   const openapiDocs = readOpenApiDocs(ctx, { openapiFiles, root, diagnostics, profile, manifestDir: resolved.dotCascade });
   const { webFacts, webWorkerStats } = webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root, relOf });
@@ -204,7 +212,7 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
     runtimeStats, otelTraces, webBridgeMs,
   } = assembleAll({
     result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs,
-    screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming, tsOpts,
+    screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming, jpaImplicitNaming, tsOpts,
   });
   const laneStats = sayBackendLanes({ jstats, jpaStats, mpStats, runJava, runJpa, runMp, openapiStats }, { tsStats, tsOpts, root, sel, relOf, profile, javaFacts: result.javaFacts, graph: g }, diagnostics);
   // ---- the web BRIDGE's own line (RM28) ---------------------------------

@@ -109,15 +109,19 @@ export function mybatisPlusOptions(profile, sqlArgs) {
   };
 }
 
+/** Only a physical/implicit naming strategy the bridge treats as coming from the configuration (the two states `configReach` weighs against the factory); a profile declaration or nothing at all is not passed through this way. */
+const reachable = (naming) => (naming && ['configuration', 'unreadable'].includes(naming.from) ? naming : null);
+
 /**
- * The JPA bridge's options: the profile's naming strategy, what the project's
- * configuration names (the bridge decides whether it reaches the factory the
- * project builds), and the factory beans and service files the tree's resources declare.
+ * The JPA bridge's options: the profile's two naming strategies (physical and,
+ * from RM67-J7, implicit), what the project's configuration names for each
+ * (the bridge decides whether either reaches the factory the project builds),
+ * and the factory beans and service files the tree's resources declare.
  */
-export function jpaOptions(profile, sqlArgs, jpaNaming, inputs = {}) {
-  const configured = jpaNaming && ['configuration', 'unreadable'].includes(jpaNaming.from) ? jpaNaming : null;
+export function jpaOptions(profile, sqlArgs, jpaNaming, jpaImplicitNaming, inputs = {}) {
   return {
-    namingStrategy: profile.jpa?.namingStrategy ?? null, configuredNaming: configured,
+    namingStrategy: profile.jpa?.namingStrategy ?? null, configuredNaming: reachable(jpaNaming),
+    implicitNamingStrategy: profile.jpa?.implicitNamingStrategy ?? null, configuredImplicitNaming: reachable(jpaImplicitNaming),
     xmlFactories: inputs.xmlFactories ?? [], serviceFiles: inputs.serviceFiles ?? [], resourcesRead: inputs.resourcesRead !== false,
     schema: sqlArgs.defaultSchema, identifierCase: sqlArgs.identifierCase,
   };

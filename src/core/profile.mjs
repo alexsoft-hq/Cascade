@@ -79,7 +79,12 @@ export const PROFILE_DEFAULTS = deepFreeze({
     typeorm: { namingStrategy: null, entityPrefix: null, schema: null, type: null },
   },
   modelPacks: [],
-  jpa: { namingStrategy: null },
+  // `implicitNamingStrategy` states the OTHER half of Hibernate's naming
+  // (RM67-J7): the rule a default join table's name rests on,
+  // which `namingStrategy` (the physical one) does not state. `null` is
+  // undeclared, and stays out of the digest until set (KEYS_DIGESTED_WHEN_SET)
+  // so a pack sealed before this key existed keeps its digest.
+  jpa: { namingStrategy: null, implicitNamingStrategy: null },
   mybatisPlus: {
     namingStrategy: null, tablePrefix: null,
     logicDeleteValue: null, logicNotDeleteValue: null,
@@ -131,7 +136,7 @@ export const BLOCKS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend', 'pathPrefixe
  * had while the key is at its default. A key added to a digested block from
  * now on goes here.
  */
-export const KEYS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend.typeorm', 'tsBackend.typeorm.type', 'openapi.generatedFromCode', 'openapi.generatesCode']);
+export const KEYS_DIGESTED_WHEN_SET = Object.freeze(['tsBackend.typeorm', 'tsBackend.typeorm.type', 'openapi.generatedFromCode', 'openapi.generatesCode', 'jpa.implicitNamingStrategy']);
 
 /** The profile the digest is taken of: every block, except one of BLOCKS_DIGESTED_WHEN_SET still at its default, and without a key of KEYS_DIGESTED_WHEN_SET still at its own. */
 export function digestedProfile(profile) {
@@ -182,6 +187,15 @@ export const KNOWN_FRAMEWORK_PACKS = Object.freeze(['mybatis-xml', 'spring-mvc',
  * assumption can never travel as a confirmed mapping (I-1).
  */
 export const JPA_NAMING_STRATEGIES = Object.freeze(['spring-snake-case', 'snake-case-hibernate6', 'snake-case-hibernate7', 'identity']);
+
+/**
+ * The implemented implicit strategies: SpringImplicitNamingStrategy (`spring`)
+ * and ImplicitNamingStrategyJpaCompliantImpl (`jpa-compliant`). They differ in
+ * default association join-table names; collection tables are not modelled.
+ * Legacy and component-path classes also alter names outside that formula,
+ * so they are not aliases of these strategies. Null leaves naming assumed.
+ */
+export const JPA_IMPLICIT_NAMING_STRATEGIES = Object.freeze(['spring', 'jpa-compliant']);
 
 /**
  * The physical naming strategies `mybatisPlus.namingStrategy` may name (SPEC
@@ -366,7 +380,11 @@ export const PROFILE_KEY_CONSUMERS = deepFreeze({
   },
   'jpa.namingStrategy': {
     status: 'consumed', where: 'src/adapters/jpa_bridge.mjs',
-    note: 'the rule an entity/attribute name without @Table/@Column is turned into a physical name by; null (undeclared) makes the engine assume Spring Boot\'s CamelCase→snake_case default and grade every derived name HEURISTIC instead of EXACT',
+    note: 'the physical rule applied to both derived names and names written in @Table/@Column/@JoinColumn/@JoinTable. The profile wins, else configuration is weighed against how the EntityManagerFactory is built. Without a declaration, the bridge assumes the factory\'s default or a strategy set in code and grades derived names HEURISTIC; a written name remains EXACT when every supported physical strategy spells it alike under the identifier-case rule. This key does not declare the implicit naming strategy',
+  },
+  'jpa.implicitNamingStrategy': {
+    status: 'consumed', where: 'src/adapters/jpa_naming.mjs',
+    note: 'the rule a default association join table\'s name that @JoinTable does not spell out rests on: spring (the owning table and the attribute) or jpa-compliant (the two tables). jpa.namingStrategy states the physical strategy only, so null (undeclared) leaves such a name resting on the strategy the project\'s EntityManagerFactory runs with by default, HEURISTIC where the two known strategies would spell it differently, unless the project\'s configuration states it and reaches that factory (src/adapters/jpa_naming.mjs, the same reach rules as jpa.namingStrategy)',
   },
   'mybatisPlus.namingStrategy': {
     status: 'consumed', where: 'src/adapters/mp_bridge.mjs',
@@ -939,6 +957,23 @@ if ('gatewayRoutes' in obj) {
 }
 }
 
+/** profile.jpa's two naming strategies: the physical one and the implicit one a default join or collection table's name rests on (RM67-J7). */
+function validateJpaNaming(obj) {
+  if (!isObject(obj.jpa)) return;
+  if ('namingStrategy' in obj.jpa) {
+    const ns = obj.jpa.namingStrategy;
+    if (ns !== null && !JPA_NAMING_STRATEGIES.includes(ns)) {
+      throw new ProfileError(`profile.jpa.namingStrategy must be null or one of ${JPA_NAMING_STRATEGIES.join('|')}, got ${JSON.stringify(ns)}`);
+    }
+  }
+  if ('implicitNamingStrategy' in obj.jpa) {
+    const is = obj.jpa.implicitNamingStrategy;
+    if (is !== null && !JPA_IMPLICIT_NAMING_STRATEGIES.includes(is)) {
+      throw new ProfileError(`profile.jpa.implicitNamingStrategy must be null or one of ${JPA_IMPLICIT_NAMING_STRATEGIES.join('|')}, got ${JSON.stringify(is)}`);
+    }
+  }
+}
+
 /**
  * THE SINGLE-VALUE KEYS: a schema, a switch, a naming strategy, an identifier
  * case. Every one of them is read by a lane that has no second opinion about it,
@@ -1005,12 +1040,7 @@ if ('sqlIdentifierCase' in obj) {
   }
 }
 
-if (isObject(obj.jpa) && 'namingStrategy' in obj.jpa) {
-  const ns = obj.jpa.namingStrategy;
-  if (ns !== null && !JPA_NAMING_STRATEGIES.includes(ns)) {
-    throw new ProfileError(`profile.jpa.namingStrategy must be null or one of ${JPA_NAMING_STRATEGIES.join('|')}, got ${JSON.stringify(ns)}`);
-  }
-}
+validateJpaNaming(obj);
 
 if (isObject(obj.mybatisPlus)) {
   if ('namingStrategy' in obj.mybatisPlus) {

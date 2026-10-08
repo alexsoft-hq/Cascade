@@ -395,7 +395,7 @@ export function webWorkerStatsOf({ result, webSrc, sel, profile, resolved, root,
  * rule handed in is the SAME one the lineage worker matched with, so a bridge
  * cannot key a table differently from the worker that resolved it.
  */
-export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs, screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming = null, tsOpts = null }) {
+export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorkerStats, profile, discovery, sqlArgs, screenGate, runJava, runJpa, mpOpts, fragmentLineage, catalog, lineage, relOf, jpaNaming = null, jpaImplicitNaming = null, tsOpts = null }) {
   // The web bridge's own wall time, measured around the bridge and not around
   // the whole assembly: it is the number the lane line reports, so it has to
   // be the bridge's and nobody else's. Printed, never written into the pack —
@@ -422,7 +422,7 @@ export function assembleAll({ result, webFacts, openapiDocs, otelFiles, webWorke
     java: runJava ? javaLaneOptions(profile, { idGenerators: discovery?.idGenerators ?? [] }) : null,
     // The profile's strategy, what the project's configuration names (index.mjs),
     // and the factory beans and service files discovery found in the resources.
-    jpa: runJpa ? jpaOptions(profile, sqlArgs, jpaNaming, {
+    jpa: runJpa ? jpaOptions(profile, sqlArgs, jpaNaming, jpaImplicitNaming, {
       xmlFactories: discovery?.jpaFactories ?? [], serviceFiles: discovery?.serviceFiles ?? [], resourcesRead: !!discovery,
     }) : null,
     mybatisPlus: mpOpts ? { ...mpOpts, fragmentLineage } : null,

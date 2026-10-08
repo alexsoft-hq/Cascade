@@ -1185,6 +1185,7 @@
   "diag.title.ROUTE_MOUNT_FROM_DOCUMENT": "OpenAPI 문서가 말하는 자리에 둔 경로",
   "diag.title.GATEWAY_ROUTES_KEPT": "프로필에 선언된 게이트웨이 경로를 그대로 둠",
   "diag.title.GATE_STRICT": "봉인된 기준선이 있어야 하는 보정 게이트",
+  "diag.title.JPA_IMPLICIT_NAMING_ASSUMED": "조인 테이블 기본 이름이 추정한 규칙에 기대는 상태",
   "diag.title.JPA_NAMING_FROM_CONFIGURATION": "프로젝트 설정에서 읽은 JPA 이름 규칙",
   "diag.title.JPA_NAMING_FROM_FACTORY": "팩토리를 만드는 방식이 정한 JPA 이름 규칙",
   "diag.title.JPA_NAMING_UNREADABLE": "이 엔진이 적용하지 못하는 JPA 이름 규칙",

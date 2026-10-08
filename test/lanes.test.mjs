@@ -4,7 +4,7 @@ import path from 'node:path';
 import {
   selectLanes, sqlLaneArgs, declareAxes, axisLimits, axisKnownGaps, AXES, chooseDdlFiles,
   chooseCatalogVendor, chooseVendorMappers, groupDdlByVendor, groupMappersByVendor,
-  screenAxisOf, serviceNamesOf, jpaNamingOf,
+  screenAxisOf, serviceNamesOf, jpaNamingOf, jpaImplicitNamingOf,
 } from '../src/core/lanes.mjs';
 import { normalizeProfile } from '../src/core/profile.mjs';
 import { catalogLaneInputs } from '../src/cli/lane_options.mjs';
@@ -1163,4 +1163,12 @@ test('the naming strategy is the profile\'s, else the one the configuration name
   assert.equal(jpaNamingOf({}, [at('identity', 'application-dev.properties', 'X', true)]).from, 'unreadable', 'a profile-only declaration is not proven to apply');
   assert.equal(jpaNamingOf({}, [at('spring-snake-case', 'a'), at('identity', 'a', 'X', true)]).from, 'unreadable', 'a profile that names another strategy leaves it to whichever profile runs');
   assert.equal(jpaNamingOf({}, [at('spring-snake-case', 'a'), at('spring-snake-case', 'b', 'X', true)]).strategy, 'spring-snake-case', 'a profile that agrees changes nothing');
+});
+
+test('jpaImplicitNamingOf reads the same way, for jpa.implicitNamingStrategy (RM67-J7)', () => {
+  const at = (strategy, file, className = 'X', conditional = false) => ({ strategy, file, className, line: 1, conditional });
+  assert.equal(jpaImplicitNamingOf({ jpa: { implicitNamingStrategy: 'spring' } }, [at('jpa-compliant', 'a')]).strategy, 'spring', 'the profile wins');
+  assert.deepEqual(jpaImplicitNamingOf({ jpa: { implicitNamingStrategy: null } }, [at('jpa-compliant', 'a'), at('jpa-compliant', 'b')]),
+    { strategy: 'jpa-compliant', from: 'configuration', files: ['a', 'b'], classNames: ['X'], vias: ['boot'] });
+  assert.equal(jpaImplicitNamingOf({}, null).from, 'none');
 });

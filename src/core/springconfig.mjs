@@ -584,11 +584,25 @@ const JPA_PHYSICAL_STRATEGIES = Object.freeze({
   'org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl': 'identity',
 });
 
+/**
+ * Only strategies whose derived names the bridge models are declarations.
+ * Hibernate 6.6/7.1 legacy and component-path strategies share some join-table
+ * formulas, but change join columns, entity names, or embedded paths. They
+ * must remain unmodelled instead of borrowing another strategy's certainty.
+ */
+const JPA_IMPLICIT_STRATEGIES = Object.freeze({
+  'org.springframework.boot.orm.jpa.hibernate.SpringImplicitNamingStrategy': 'spring',
+  'org.springframework.boot.hibernate.SpringImplicitNamingStrategy': 'spring', // Spring Boot 4.0's package
+  'org.hibernate.boot.model.naming.ImplicitNamingStrategyJpaCompliantImpl': 'jpa-compliant',
+});
+
 /** Spring Boot's own key, in any spelling its relaxed binding accepts. */
 const BOOT_NAMING_KEY = 'spring.jpa.hibernate.naming.physical-strategy';
 /** Hibernate's key passed through `spring.jpa.properties`: a map key, bound VERBATIM, so only this spelling counts. */
 const PASSTHROUGH_NAMING_KEY = 'spring.jpa.properties.hibernate.physical_naming_strategy';
-const isNamingKey = (key) => relaxedKey(key) === BOOT_NAMING_KEY || key === PASSTHROUGH_NAMING_KEY;
+/** The same two keys, for the implicit strategy (RM67-J7). */
+const BOOT_IMPLICIT_NAMING_KEY = 'spring.jpa.hibernate.naming.implicit-strategy';
+const PASSTHROUGH_IMPLICIT_NAMING_KEY = 'spring.jpa.properties.hibernate.implicit_naming_strategy';
 
 /** A profile-specific file (`application-dev.yml`, `bootstrap.yml` and its kin): applied only when that context is. */
 const PROFILE_FILE_RE = /^(?:application-[^./]+|bootstrap(?:-[^./]+)?)\.(?:ya?ml|properties)$/i;
@@ -596,34 +610,58 @@ const PROFILE_FILE_RE = /^(?:application-[^./]+|bootstrap(?:-[^./]+)?)\.(?:ya?ml
 const ACTIVATION_KEY_RE = /^spring\.(?:config\.activate\.on-profile|profiles)$/;
 
 /**
- * The JPA physical naming strategy each file declares. A class this engine does
- * not model (the project's own strategy, a placeholder) is listed with a null
- * strategy and said once, so it can never pass for Spring's default.
- *
+ * The naming strategy each file declares under one key pair (Boot's own,
+ * relaxed-bound, and Hibernate's own passed through verbatim). A class neither
+ * table lists (the project's own strategy, a placeholder) is listed with a
+ * null strategy and said once, so it can never pass for the factory's default.
+ * Shared by `findJpaNamingStrategies` (physical) and `findJpaImplicitNamingStrategies`.
+ */
+function namingStrategiesOf(files, keys, classes, diagnostics) {
+  const isKey = (key) => relaxedKey(key) === keys.boot || key === keys.passthrough;
+  const out = [];
+  for (const file of files ?? []) {
+    if (!file || typeof file.path !== 'string' || typeof file.text !== 'string') continue;
+    const entries = springConfigEntries(file, diagnostics);
+    const conditional = conditionalDocuments(file.path, entries);
+    for (const e of entries.filter((x) => isKey(x.key))) {
+      const className = resolvePlaceholder(e.value)?.trim() ?? null;
+      const strategy = className === null ? null : classes[className] ?? null;
+      if (strategy === null) {
+        diag(diagnostics, 'info', 'JPA_NAMING_STRATEGY_UNMODELLED', file.path,
+          `${e.key} on line ${e.line} is ${JSON.stringify(e.value)}, a naming strategy this engine does not model, so the names it derives stay HEURISTIC${keys.profile ? `; verify the runtime strategy and declare ${keys.profile} only if it matches a supported strategy` : ''}`);
+      }
+      // Which key it came by: Boot's own reaches only the factory Boot builds, Hibernate's passed through reaches any Boot hands its properties to.
+      const via = e.key === keys.passthrough ? 'passthrough' : 'boot';
+      out.push({ strategy, className: className ?? e.value, file: file.path, line: e.line, conditional: conditional(e.doc), via });
+    }
+  }
+  return out.sort((a, b) => cmp(a.file, b.file) || a.line - b.line);
+}
+
+/**
+ * The JPA PHYSICAL naming strategy each file declares.
  * @param {{path:string, text:string}[]} files
  * @param {Object[]|null} [diagnostics]
  * @returns {{strategy:(string|null), className:string, file:string, line:number, conditional:boolean, via:('boot'|'passthrough')}[]}
  *          sorted by file, then line
  */
 export function findJpaNamingStrategies(files, diagnostics = null) {
-  const out = [];
-  for (const file of files ?? []) {
-    if (!file || typeof file.path !== 'string' || typeof file.text !== 'string') continue;
-    const entries = springConfigEntries(file, diagnostics);
-    const conditional = conditionalDocuments(file.path, entries);
-    for (const e of entries.filter((x) => isNamingKey(x.key))) {
-      const className = resolvePlaceholder(e.value)?.trim() ?? null;
-      const strategy = className === null ? null : JPA_PHYSICAL_STRATEGIES[className] ?? null;
-      if (strategy === null) {
-        diag(diagnostics, 'info', 'JPA_NAMING_STRATEGY_UNMODELLED', file.path,
-          `${e.key} on line ${e.line} is ${JSON.stringify(e.value)}, a naming strategy this engine does not model, so the names it derives stay HEURISTIC`);
-      }
-      // Which key it came by: Boot's own reaches only the factory Boot builds, Hibernate's passed through reaches any Boot hands its properties to.
-      const via = e.key === PASSTHROUGH_NAMING_KEY ? 'passthrough' : 'boot';
-      out.push({ strategy, className: className ?? e.value, file: file.path, line: e.line, conditional: conditional(e.doc), via });
-    }
-  }
-  return out.sort((a, b) => cmp(a.file, b.file) || a.line - b.line);
+  return namingStrategiesOf(files, { boot: BOOT_NAMING_KEY, passthrough: PASSTHROUGH_NAMING_KEY }, JPA_PHYSICAL_STRATEGIES, diagnostics);
+}
+
+/**
+ * THE JPA IMPLICIT NAMING STRATEGY each file declares (RM67-J7), the same shape
+ * `findJpaNamingStrategies` reads the physical one in: spring.jpa.hibernate.naming.implicit-strategy
+ * (Boot's own, reaches only the factory Boot builds, and a builder-made one
+ * only from Spring Boot 3.4) and spring.jpa.properties.hibernate.implicit_naming_strategy
+ * (Hibernate's own, passed through, reaches any factory Boot hands its
+ * properties to). How far either reaches the factory a tree builds is decided
+ * where the physical one's is, by the same rule (src/adapters/jpa_naming.mjs,
+ * `configReach`).
+ * @returns {{strategy:(string|null), className:string, file:string, line:number, conditional:boolean, via:('boot'|'passthrough')}[]}
+ */
+export function findJpaImplicitNamingStrategies(files, diagnostics = null) {
+  return namingStrategiesOf(files, { boot: BOOT_IMPLICIT_NAMING_KEY, passthrough: PASSTHROUGH_IMPLICIT_NAMING_KEY, profile: 'jpa.implicitNamingStrategy' }, JPA_IMPLICIT_STRATEGIES, diagnostics);
 }
 
 /**

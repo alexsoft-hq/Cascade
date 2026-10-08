@@ -157,8 +157,7 @@ export function serviceNamesOf(profile, discovery = null) {
  * depends on who builds the factory (src/adapters/jpa_naming.mjs).
  * @returns {{strategy:(string|null), from:('profile'|'configuration'|'unreadable'|'none'), files:string[], classNames:string[], vias:string[]}}
  */
-export function jpaNamingOf(profile, configured = []) {
-  const declared = profile?.jpa?.namingStrategy ?? null;
+function namingOf(declared, configured) {
   if (declared != null) return { strategy: declared, from: 'profile', files: [], classNames: [], vias: [] };
   const found = Array.isArray(configured) ? configured : [];
   if (found.length === 0) return { strategy: null, from: 'none', files: [], classNames: [], vias: [] };
@@ -171,6 +170,20 @@ export function jpaNamingOf(profile, configured = []) {
   const everything = [...new Set(found.map((f) => f.strategy))];
   const one = always.length === 1 && always[0] !== null && everything.length === 1;
   return { strategy: one ? always[0] : null, from: one ? 'configuration' : 'unreadable', files, classNames, vias };
+}
+
+export function jpaNamingOf(profile, configured = []) {
+  return namingOf(profile?.jpa?.namingStrategy ?? null, configured);
+}
+
+/**
+ * THE JPA IMPLICIT NAMING STRATEGY THIS RUN APPLIES (RM67-J7), read the same
+ * way `jpaNamingOf` reads the physical one: the profile's jpa.implicitNamingStrategy
+ * when it declares one, else what the project's own Spring configuration names
+ * (`findJpaImplicitNamingStrategies`, ./springconfig.mjs), else none.
+ */
+export function jpaImplicitNamingOf(profile, configured = []) {
+  return namingOf(profile?.jpa?.implicitNamingStrategy ?? null, configured);
 }
 
 /** A written name the strategies spell differently, and what the assumed one makes of it. */
