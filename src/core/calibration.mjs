@@ -276,7 +276,7 @@ export function enginePrint(input) {
  */
 export function pinOf(input) {
   if (!input || typeof input !== 'object') throw new CalibrationError('pinOf requires an object');
-  if (input.sourceContentDigest !== undefined && !/^[a-f0-9]{64}$/.test(input.sourceContentDigest)) throw new CalibrationError('sourceContentDigest must be a SHA256 content digest');
+  if (input.sourceContentDigest !== undefined && (typeof input.sourceContentDigest !== 'string' || !/^[a-f0-9]{64}$/.test(input.sourceContentDigest))) throw new CalibrationError('sourceContentDigest must be a SHA256 content digest');
   const sel = input.selection && typeof input.selection === 'object' ? input.selection : {};
   const inputsDigest = sha256(canonicalJson({
     schema: 'cascade:pin-inputs:1',

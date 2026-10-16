@@ -49,7 +49,10 @@ Each dated section below is one round of work. The round protocol is in
   preserves the selected registry through `CASCADE_HOME`, including Codex TOML.
   Calibration pins distinguish saved input bytes from engine identity, including
   ignored files and successive uncommitted edits, without bypassing regression
-  gates. TypeScript input roots use canonical paths so Windows short names and
+  gates. Analysis rejects source changes during extraction before publication;
+  generated output and state directories do not invalidate their own inputs,
+  including when nested beneath selected source roots. TypeScript input roots
+  use canonical paths so Windows short names and
   directory aliases do not turn internal files into external ones.
 
 - **Source-backed NestJS prefix exclusions.** Imported literal constants,

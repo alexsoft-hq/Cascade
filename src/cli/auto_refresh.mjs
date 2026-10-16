@@ -82,11 +82,24 @@ export function sourceContentFingerprint(entry, pack) {
   return hash(sourceInputs(entry, pack, { recorded: false, allowUnversioned: true }));
 }
 
+/** Canonicalize even not-yet-created output/config paths through their existing ancestor. */
+function inputPath(file) {
+  if (!file) return null;
+  const absolute = path.resolve(file);
+  try { return fs.realpathSync.native(absolute); }
+  catch (error) {
+    if (error.code !== 'ENOENT' || path.dirname(absolute) === absolute) throw error;
+    return path.join(inputPath(path.dirname(absolute)), path.basename(absolute));
+  }
+}
+
 function sourceInputs(entry, pack, { recorded = true, allowUnversioned = false } = {}) {
-  const root = path.resolve(pack.meta.base.repoPath);
+  entry = { ...entry, packDir: inputPath(entry.packDir), dotCascadePath: inputPath(entry.dotCascadePath) };
+  const root = inputPath(pack.meta.base.repoPath);
   const excluded = [path.resolve(entry.packDir), path.resolve(`${entry.packDir}-rejected`), ...(entry.dotCascadePath ? [path.resolve(entry.dotCascadePath)] : [])];
   const lines = [], fileHash = createFileHashCache();
-  const digestOf = (file) => contentDigestOf(file, fileHash);
+  const options = { exclude: (file) => excluded.some((dir) => inside(inputPath(file), dir)), canonicalize: inputPath };
+  const digestOf = (file) => contentDigestOf(file, fileHash, options);
   let head, files;
   try {
     const git = (args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, maxBuffer: 32 * 1024 * 1024 });
@@ -107,11 +120,11 @@ function sourceInputs(entry, pack, { recorded = true, allowUnversioned = false }
     } catch (error) { if (error.code === 'ENOENT') lines.push([rel, 'missing']); else throw error; }
   }
   const analysis = pack.meta.analysis ?? {};
-  const external = externalSourcesOf(analysis.invocation, analysis.selection, fileHash);
+  const external = externalSourcesOf(analysis.invocation, analysis.selection, fileHash, options);
   // Explicitly selected roots can contain ignored inputs; hash those too.
   const selected = ['javaRoots', 'webRoots', 'mapperDirs', 'tsRoots', 'ddls'].flatMap((key) => analysis.selection?.[key] ?? []);
   selected.push(...(analysis.selection?.templateRoots ?? []).map((item) => item.root), ...['javaSrc', 'webSrc', 'tsSrc', 'mappers', 'ddl', 'openapi'].flatMap((key) => analysis.invocation?.[key] ?? []));
-  for (const file of new Set(selected.map((selectedPath) => path.resolve(root, selectedPath)))) {
+  for (const file of new Set(selected.map((selectedPath) => inputPath(path.resolve(root, selectedPath))))) {
     const absolute = path.resolve(root, file);
     if (!excluded.some((dir) => inside(absolute, dir))) external[absolute] = absolute === root ? selectedRootDigest(root, excluded, analysis, digestOf) : digestOf(absolute);
   }
@@ -120,7 +133,7 @@ function sourceInputs(entry, pack, { recorded = true, allowUnversioned = false }
   const profile = analysis.invocation?.profile;
   const extras = [...(analysis.declaredInputs ?? []).map((file) => path.resolve(root, file)), profile ? path.resolve(root, profile) : null,
     ...(entry.dotCascadePath ? ['profile.json', 'manifest.json', 'catalog', 'golden'].map((name) => path.join(entry.dotCascadePath, name)) : [])].filter(Boolean);
-  for (const file of extras) external[file] = digestOf(file);
+  for (const file of extras) external[inputPath(file)] = contentDigestOf(file, fileHash);
   for (const file of Object.keys(external).filter((item) => path.isAbsolute(item) && !inside(item, root) && !item.includes('#'))) {
     try {
       const directory = fs.statSync(file).isDirectory() ? file : path.dirname(file);

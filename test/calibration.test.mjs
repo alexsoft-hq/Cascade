@@ -506,4 +506,5 @@ test('source content moves the pin without changing engine semantics or bypassin
   assert.equal(evaluate(changed, 1).verdict, 'RED');
   assert.notEqual(pin.inputsDigest, pinOf(base).inputsDigest);
   assert.throws(() => pinOf({ ...base, sourceContentDigest: 'opaque-token' }), /SHA256/);
+  assert.throws(() => pinOf({ ...base, sourceContentDigest: { toString: () => 'a'.repeat(64) } }), /SHA256/);
 });

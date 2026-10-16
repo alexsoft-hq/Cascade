@@ -68,9 +68,15 @@ const INVOCATION_LANES = [['ddl', 'noDdl'], ['mappers', 'noMappers'], ['javaSrc'
  * @param {object} selection   `meta.analysis.selection`, paths portable
  * @returns {Object<string,string>} absolute path -> digest, sorted by path
  */
-export function externalSourcesOf(invocation = {}, selection = {}, fileHash = sha256File) {
+export function externalSourcesOf(invocation = {}, selection = {}, fileHash = sha256File, options = {}) {
   const keys = new Set([...inputPathsOf(invocation ?? {}, selection ?? {}).filter(isOutside), ...configKeysOf(invocation ?? {}, selection ?? {})]);
-  return Object.fromEntries([...keys].sort().map((p) => [p, digestOfSource(p, fileHash)]));
+  return Object.fromEntries([...keys].map((key) => canonicalSourceKey(key, options.canonicalize)).sort().map((p) => [p, digestOfSource(p, fileHash, options)]));
+}
+
+function canonicalSourceKey(key, canonicalize) {
+  if (!canonicalize) return key;
+  const suffix = [PACKAGE_CONFIG, SPRING_CONFIG].find((part) => key.endsWith(part)) ?? '';
+  return canonicalize(suffix ? key.slice(0, -suffix.length) : key) + suffix;
 }
 
 const isOutside = (p) => typeof p === 'string' && path.isAbsolute(p);
@@ -134,12 +140,12 @@ export function changedSince(analysis) {
 }
 
 /** One recorded source's digest now: a path's content, or a package directory's configuration files. */
-function digestOfSource(key, fileHash) {
+function digestOfSource(key, fileHash, options) {
   if (key.endsWith(SPRING_CONFIG)) {
     const resources = key.slice(0, -SPRING_CONFIG.length);
     return filesDigest(resources, () => springConfigFilesBeside(path.join(path.dirname(resources), 'java')), fileHash);
   }
-  if (!key.endsWith(PACKAGE_CONFIG)) return contentDigestOf(key, fileHash);
+  if (!key.endsWith(PACKAGE_CONFIG)) return contentDigestOf(key, fileHash, options);
   const dir = key.slice(0, -PACKAGE_CONFIG.length);
   return filesDigest(dir, () => fs.readdirSync(dir).filter((n) => isWebPackageConfigFile(n) && fs.statSync(path.join(dir, n)).isFile()).sort().map((n) => path.join(dir, n)), fileHash);
 }
@@ -163,20 +169,19 @@ function packageDirOf(root) {
 }
 
 /** A digest of a file, or of every regular file under a directory; `missing` when it is gone, `unreadable` when it cannot be read. */
-export function contentDigestOf(abs, fileHash = sha256File) {
+export function contentDigestOf(abs, fileHash = sha256File, { exclude = () => false } = {}) {
+  if (exclude(abs)) return 'excluded';
   if (!fs.existsSync(abs)) return 'missing';
   const lines = [];
-  try {
-    visit(abs, '', { lines, firstPath: new Map(), fileHash });
-  } catch {
-    return UNREADABLE;
-  }
+  try { visit(abs, '', { lines, firstPath: new Map(), fileHash, exclude }); }
+  catch { return UNREADABLE; }
   return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
 }
 
 const SKIPPED = new Set(['node_modules', '.git', '.cascade']);
 
 function visit(p, rel, walk) {
+  if (walk.exclude(p)) return;
   const st = fs.statSync(p);
   if (st.isFile()) walk.lines.push(`${rel}\t${walk.fileHash(p)}`);
   else if (st.isDirectory()) visitDirectory(p, rel, walk);

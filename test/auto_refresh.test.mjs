@@ -564,3 +564,64 @@ require('node:module').syncBuiltinESMExports();`);
   assert.equal(pack.meta.calibration.mode, 'REPIN');
   assert.ok(JSON.parse(fs.readFileSync(path.join(f.entry.packDir, 'structure.json'))).declarations.some((d) => d.name === 'added'));
 });
+
+test('source identity canonicalizes state directory aliases before and after bootstrap', (t) => {
+  const f = fixture(t), outer = fixture(t);
+  fs.writeFileSync(path.join(f.root, 'a.js'), 'export const a = 1;'); commitFixture(f.root);
+  const alias = path.join(outer.root, 'linked-root');
+  try { fs.symlinkSync(f.root, alias, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (['EPERM', 'EACCES'].includes(error.code)) { t.skip('symlink creation not permitted'); return; } throw error; }
+  const state = path.join(f.root, 'new-state'), viaAlias = { ...f.entry, packDir: path.join(alias, 'new-state/pack'), dotCascadePath: path.join(alias, 'new-state') };
+  const canonical = { ...f.entry, packDir: path.join(state, 'pack'), dotCascadePath: state };
+  const before = sourceContentFingerprint(viaAlias, f.pack);
+  assert.equal(sourceContentFingerprint(canonical, f.pack), before);
+  const aliasedPack = { ...f.pack, meta: { ...f.pack.meta, base: { ...f.pack.meta.base, repoPath: alias } } };
+  assert.equal(sourceContentFingerprint(viaAlias, aliasedPack), before);
+  fs.mkdirSync(path.join(state, 'pack'), { recursive: true });
+  fs.writeFileSync(path.join(state, 'pack/pack.json'), '{}');
+  assert.equal(sourceContentFingerprint(canonical, f.pack), before);
+  assert.equal(sourceContentFingerprint(viaAlias, f.pack), before);
+  fs.writeFileSync(path.join(state, 'profile.json'), '{"changed":true}');
+  assert.notEqual(sourceContentFingerprint(canonical, f.pack), before);
+});
+
+test('nested output and rejected packs never enter selected-root or aliased external digests', (t) => {
+  const f = fixture(t), outside = fixture(t);
+  const src = path.join(f.root, 'src'); fs.mkdirSync(src);
+  const source = path.join(src, 'a.js'); fs.writeFileSync(source, 'export const a = 1;'); commitFixture(f.root);
+  const alias = path.join(outside.root, 'selected');
+  try { fs.symlinkSync(src, alias, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (['EPERM', 'EACCES'].includes(error.code)) { t.skip('symlink creation not permitted'); return; } throw error; }
+  const entry = { ...f.entry, packDir: path.join(src, 'generated-pack') };
+  f.pack.meta.analysis = { invocation: { webSrc: [alias] }, selection: { webRoots: ['src', alias] } };
+  const before = sourceContentFingerprint(entry, f.pack);
+  for (const dir of [entry.packDir, `${entry.packDir}-rejected`]) {
+    fs.mkdirSync(dir);
+    for (const name of ['pack.json', 'facts-index.json', 'structure.json', 'refresh-state.json']) fs.writeFileSync(path.join(dir, name), '{"generated":true}');
+  }
+  assert.equal(sourceContentFingerprint(entry, f.pack), before);
+  fs.writeFileSync(path.join(entry.packDir, 'pack.json'), '{"generated":"changed"}');
+  assert.equal(sourceContentFingerprint(entry, f.pack), before);
+  fs.writeFileSync(source, 'export const a = 2;'); assert.notEqual(sourceContentFingerprint(entry, f.pack), before);
+});
+
+test('real analysis with output nested under a selected root has stable input identity and reusable refresh', async (t) => {
+  const f = fixture(t), cache = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-nested-output-'));
+  t.after(() => fs.rmSync(cache, { recursive: true, force: true }));
+  const env = { ...process.env, CASCADE_HOME: cache };
+  const src = path.join(f.root, 'src'); fs.mkdirSync(src);
+  fs.writeFileSync(path.join(src, 'main.ts'), 'export class Main { a() {} b() {} }'); commitFixture(f.root);
+  const entry = { ...f.entry, packDir: path.join(src, 'generated-pack') };
+  const { CLI_PATH } = await import('../src/cli/env.mjs');
+  const args = [CLI_PATH, 'analyze', '--root', f.root, '--out', entry.packDir, '--ts-src', src, '--no-java', '--no-web', '--no-ddl', '--no-mappers', '--no-openapi'];
+  const analyze = () => execFileSync(process.execPath, args, { cwd: f.root, env, stdio: 'pipe' });
+  const pack = () => JSON.parse(fs.readFileSync(path.join(entry.packDir, 'pack.json')));
+  analyze(); const first = pack().meta.analysis.sourceContentDigest;
+  analyze(); assert.equal(pack().meta.analysis.sourceContentDigest, first);
+  let runs = 0;
+  const c = createAutoRefresh({ entries: [entry], intervalMs: 0, run: (e, p, options) => { runs++; return runRefresh(e, p, { ...options, env }); } }); t.after(c.close);
+  await c.ensureFresh(); assert.equal(runs, 1); assert.equal(c.status('sample').verdict, 'current');
+  await c.ensureFresh(); assert.equal(runs, 1);
+  fs.writeFileSync(path.join(src, 'main.ts'), 'export class Main { a() {} b() {} added() {} }');
+  await c.ensureFresh(); assert.equal(runs, 2); assert.equal(c.status('sample').verdict, 'current');
+});
