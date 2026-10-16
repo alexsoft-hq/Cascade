@@ -32,7 +32,9 @@ export function run(cli) {
   const mark = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'cascade-mark.svg'), 'utf8');
   const markDark = fs.readFileSync(path.join(ENGINE_ROOT, 'viewer', 'cascade-mark-dark.svg'), 'utf8');
   const port = Number(opt('port', '4319'));
-  serveHttp({ http, port, deps: viewerDeps(host), html, mark, markDark }).then(({ port: p }) => {
+  serveHttp({ http, port, deps: viewerDeps(host), html, mark, markDark }).then(({ port: p, server }) => {
+    server.once('close', () => host.close());
+    for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { host.close(); server.close(); });
     process.stderr.write(`cascade viewer at http://127.0.0.1:${p}/  serving ${served.length} project(s) [${served.map((x) => x.id).join(', ')}], `
       + `budget ${(host.budgetBytes / (1024 * 1024)).toFixed(0)} MB of pack JSON\n`);
     if (served.length > 1) {
@@ -63,7 +65,7 @@ function viewerDeps(host) {
     return { projectId, ctx: host.ctxFor(projectId) };
   };
   return {
-    toolList,
+    toolList, ensureFresh: host.ensureFor,
     callTool: (name, args) => host.callTool(name, args),
     meta: (project) => projectMeta(host, project),
     // The rule packs, where each left its mark here, and whether their examples hold.

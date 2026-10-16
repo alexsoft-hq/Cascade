@@ -133,7 +133,8 @@ export function keyToFile(key) {
 /** A line-delimited JSON-RPC client over a spawned `cascade mcp`. */
 class McpClient {
   constructor(args, env) {
-    this.child = spawn(process.execPath, [CLI, 'mcp', ...args], {
+    // A recorder observes immutable packs; it must never refresh or rewrite them.
+    this.child = spawn(process.execPath, [CLI, 'mcp', '--no-watch', ...args], {
       cwd: ENGINE_ROOT,
       env: { ...process.env, ...env },
       stdio: ['pipe', 'pipe', 'pipe'],

@@ -62,6 +62,7 @@
     <div class="tabrow">
       <div class="tabs" role="tablist">
         <button class="tab" aria-selected="false" data-place="start" data-t="tab.start" onclick type="button">Start</button>
+        <button class="tab" aria-selected="false" data-place="code" data-t="tab.code" onclick type="button">Code</button>
         <button class="tab" aria-selected="false" data-place="trace" data-t="tab.trace" onclick type="button">Trace</button>
         <button class="tab" aria-selected="false" data-place="structure" data-t="tab.structure" onclick type="button">Structure</button>
         <button class="tab hidden" aria-selected="false" data-place="compare" data-t="tab.compare" onclick type="button">…</button>
@@ -74,6 +75,7 @@
     </div>
   </header>
   <div class="wrap">
+    <div id="tab-code" class="hidden">…</div>
     <div id="tab-start" class="hidden">…</div>
     <div id="tab-trace" class="hidden">…</div>
     <div id="tab-coupling" class="hidden">…</div>

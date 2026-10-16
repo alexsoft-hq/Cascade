@@ -276,12 +276,12 @@ function analyze(repo, outDir, cacheHome, extra = []) {
 }
 
 /** Ask the REAL MCP server for changed_impact and return the contract response. */
-function mcpChangedImpact(repo, packDir, cacheHome, args = {}) {
+function mcpChangedImpact(repo, packDir, cacheHome, args = {}, { watch = false } = {}) {
   const lines = [
     JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {} }),
     JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'changed_impact', arguments: args } }),
   ].join('\n') + '\n';
-  const r = spawnSync(process.execPath, [CLI, 'mcp', '--pack', packDir], {
+  const r = spawnSync(process.execPath, [CLI, 'mcp', '--pack', packDir, ...(watch ? [] : ['--no-watch'])], {
     input: lines, encoding: 'utf8', maxBuffer: 1 << 28,
     env: { ...process.env, XDG_CACHE_HOME: path.join(cacheHome, 'cache'), CASCADE_HOME: path.join(cacheHome, 'home') },
   });
@@ -610,4 +610,39 @@ test('overlay-stale: with no fact index beside the pack the overlay refuses, and
   assert.equal(fallback.status, 0, fallback.stderr);
   assert.match(fallback.stdout, /mode base-only: this is the BASE pack's answer/);
   assert.equal(/shop_stock\.qty/.test(fallback.stdout), false, 'base-only must not know about the uncommitted edit');
+});
+
+
+test('default MCP refresh publishes saved edits, repairs a missing fact index, and follows a new HEAD', { timeout: 600000 }, (t) => {
+  const why = preflight();
+  if (why) { t.skip(why); return; }
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-overlay-auto-'));
+  t.after(() => fs.rmSync(work, { recursive: true, force: true }));
+  const repo = makeRepo(path.join(work, 'repo'));
+  const base = path.join(work, 'base'), cache = path.join(work, 'xdg');
+  const original = analyze(repo, base, cache).pack;
+  fs.writeFileSync(path.join(repo, IMPL), IMPL_EDITED);
+  fs.writeFileSync(path.join(repo, NEW_CONTROLLER), EXTRA_CONTROLLER);
+  fs.rmSync(path.join(base, 'facts-index.json'));
+
+  const edited = mcpChangedImpact(repo, base, cache, { files: [IMPL, NEW_CONTROLLER] }, { watch: true });
+  assertContractShape(edited);
+  const published = JSON.parse(fs.readFileSync(path.join(base, 'pack.json'), 'utf8'));
+  assert.notEqual(published.digest, original.digest, 'a normal request publishes the saved edits');
+  assert.equal(edited.basis.buildDigest, published.digest, 'the response reads the new full pack');
+  assert.ok(published.nodes.some((node) => node.id === 'endpoint:GET /extra/get'));
+  assert.ok(fs.existsSync(path.join(base, 'facts-index.json')), 'automatic analysis repairs the missing fact index');
+  const added = edited.answer.upstreamEndpoints.find((endpoint) => endpoint.id === 'GET /extra/get');
+  assert.ok(added); assert.equal(added.provisional, undefined, 'the endpoint is already in the published base');
+  assertFullSubsetOfOverlay(fullAnswer(published, [IMPL, NEW_CONTROLLER]), overlayAnswer(edited), 'automatically published edits');
+
+  git(repo, ['add', '-A']); git(repo, ['commit', '-q', '-m', 'saved changes']);
+  const committed = mcpChangedImpact(repo, base, cache, { files: [IMPL, NEW_CONTROLLER] }, { watch: true });
+  assertContractShape(committed);
+  const afterCommit = JSON.parse(fs.readFileSync(path.join(base, 'pack.json'), 'utf8'));
+  assert.notEqual(afterCommit.meta.base.commit, original.meta.base.commit);
+  assert.equal(afterCommit.meta.base.commit, git(repo, ['rev-parse', 'HEAD']).trim());
+  assert.equal(committed.basis.freshness.verdict, 'current', 'a commit triggers a new base without manual analysis');
+  assert.equal(committed.basis.buildDigest, afterCommit.digest);
+  assertFullSubsetOfOverlay(fullAnswer(afterCommit, [IMPL, NEW_CONTROLLER]), overlayAnswer(committed), 'automatically analyzed commit');
 });

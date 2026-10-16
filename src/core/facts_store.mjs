@@ -270,6 +270,7 @@ function endpointSortKey(rec) {
  * full, one function each, in the worker's own spelling.
  */
 const NEWER_SORT_KEYS = Object.freeze({
+  declaration: (rec) => `2declaration${SEP}${rec.file}${SEP}${String(rec.startOffset).padStart(12, '0')}`,
   // javafacts/16: one method that builds functional routes. Two overloads of one
   // name and arity differ by the line they are declared on.
   routeFunction: (rec) => `5routefn${SEP}${rec.owner}${SEP}${rec.method}${SEP}${rec.paramCount}${SEP}${padLine(rec.line)}`,

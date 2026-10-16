@@ -9,6 +9,7 @@
 // the description to choose a tool, so honesty here is part of the contract.
 
 import * as tools from './tools.mjs';
+import * as codeTools from './tools_code.mjs';
 import { pack_diff } from './tools_diff.mjs';
 import { summary } from './tools_summary.mjs';
 import { rules } from './tools_rules.mjs';
@@ -18,48 +19,48 @@ import { axisLimits, axisKnownGaps } from '../core/lanes.mjs';
 export const CATALOG_SCHEMA = 'cascade:mcp-catalog:1';
 
 export const TOOLS = Object.freeze({
+  architecture: {
+    description: 'Directed module dependencies from recorded imports and calls, with grades and evidence examples. Directory groups are inferred, not business modules. Lists page independently with limit/offset; maxBytes bounds answer JSON.',
+    inputSchema: { type: 'object', properties: { depth: { type: 'integer', minimum: 1, maximum: 8 }, limit: { type: 'integer', minimum: 1, maximum: 500 }, offset: { type: 'integer', minimum: 0 }, maxBytes: { type: 'integer', minimum: 2048, maximum: 262144 } } },
+    fn: codeTools.architecture,
+  },
+  session_briefing: {
+    description: 'Start a coding session with a copyable summary, directed module connections, recorded API/screen entrypoints, freshness and coverage. Uses selected persisted inputs; no inferred business intent. maxBytes bounds answer JSON, not tokens.',
+    inputSchema: { type: 'object', properties: { depth: { type: 'integer', minimum: 1, maximum: 8 }, limit: { type: 'integer', minimum: 1, maximum: 500 }, offset: { type: 'integer', minimum: 0 }, maxBytes: { type: 'integer', minimum: 4096, maximum: 262144 } } },
+    fn: codeTools.session_briefing,
+  },
+  code_trace: {
+    description: 'Trace recorded declaration calls/references, including intermediate functions. Callback references are not execution proof; grades belong to original edges, not inferred paths. Partial analyzed coverage; maxBytes bounds answer JSON, not tokens.',
+    inputSchema: { type: 'object', properties: { symbol: { type: 'string', minLength: 1 }, direction: { type: 'string', enum: ['inbound', 'outbound', 'both'] }, depth: { type: 'integer', minimum: 1, maximum: 8 }, limit: { type: 'integer', minimum: 1, maximum: 500 }, offset: { type: 'integer', minimum: 0 }, maxBytes: { type: 'integer', minimum: 2048, maximum: 262144 } }, required: ['symbol'] },
+    fn: codeTools.code_trace,
+  },
+  code_search: {
+    description: 'Find analyzed files and declarations by name/path substring in the persisted index. Stable paginated results; missing matches do not prove absence.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 1 }, kind: { type: 'string', enum: ['all', 'file', 'declaration'] }, limit: { type: 'integer', minimum: 1, maximum: 500 }, offset: { type: 'integer', minimum: 0 } }, required: ['query'] },
+    fn: codeTools.code_search,
+  },
+  file_outline: {
+    description: 'Declarations recorded for one exact analyzed file, ordered by source line. Includes extent and coverage; this is not a full language-server outline.',
+    inputSchema: { type: 'object', properties: { file: { type: 'string' }, limit: { type: 'integer', minimum: 1, maximum: 500 }, offset: { type: 'integer', minimum: 0 } }, required: ['file'] },
+    fn: codeTools.file_outline,
+  },
+  code_context: {
+    description: 'Bounded task context: ranked name/path matches and adjacent recorded relations. maxBytes bounds answer JSON UTF-8 bytes, not tokens or the contract envelope. Omitted counts disclose cuts.',
+    inputSchema: { type: 'object', properties: { query: { type: 'string', minLength: 1 }, maxBytes: { type: 'integer', minimum: 1024, maximum: 262144 }, limit: { type: 'integer', minimum: 1, maximum: 100 } }, required: ['query'] },
+    fn: codeTools.code_context,
+  },
+  code_snippet: {
+    description: 'Read current source for an exact declaration id with exact extent, or a known file/range. Requires a matching indexed source hash and repository containment; rejects stale or unknown source. maxBytes bounds snippet text.',
+    inputSchema: { type: 'object', properties: { symbol: { type: 'string' }, file: { type: 'string' }, fromLine: { type: 'integer', minimum: 1 }, toLine: { type: 'integer', minimum: 1 }, maxLines: { type: 'integer', minimum: 1, maximum: 1000 }, maxBytes: { type: 'integer', minimum: 256, maximum: 262144 } } },
+    fn: codeTools.code_snippet,
+  },
+  index_status: {
+    description: 'Structure generation, recorded coverage, counts and live refresh status. A missing sidecar or incomplete coverage never means the repository has no code.',
+    inputSchema: { type: 'object', properties: {} },
+    fn: codeTools.index_status,
+  },
   overview: {
-    description:
-      'Start here. What is IN this pack, and how much of it is wired from an HTTP route '
-      + 'down to a table. One answer gives you the node counts by kind, the edge counts by '
-      + 'type AND grade, the grade totals, how many endpoints reach no SQL statement, how '
-      + 'many statements / tables / columns are reached from at least one endpoint, the '
-      + 'code axis (symbols, external types with no source, @Transactional boundaries, '
-      + 'mapper methods) and `hubs` (the tables most endpoints arrive at, and the endpoints '
-      + 'that touch the most tables). `axes` is the pack\'s OWN declaration, word for word: '
-      + 'for each axis (catalog / statements / column / code / web / screen) whether it is '
-      + 'shipped, degraded or not-shipped, and why. Read it before you read any count, '
-      + 'because a degraded axis makes every number under it a lower bound. It is `{}` for a '
-      + 'pack built before axes were declared. `gaps` is what we could not see, all '
-      + 'computed: a pack with no code axis (not-shipped), how many calls we could not '
-      + 'resolve (or that the pack does not record it, which is unknown rather than zero), '
-      + 'external symbols, endpoints without a statement, statements and tables not reached, '
-      + 'endpoints still expanding at the depth cap, and what the mode floor refused. A '
-      + 'statement no endpoint reaches is "not reached from the endpoints we analysed", '
-      + 'usually a generated mapper method, and that is NOT a claim the code is dead. mode='
-      + 'strict|conservative|heuristic (default conservative), depth 1..8 (default: no hop cap, the node cap is the guard). '
-      + 'mode=strict usually reaches nothing, because controller to service is a call we '
-      + 'cannot prove. The schema-bounded censuses (nodes, edges, grades, statementTypes) '
-      + 'are COMPLETE: one row per kind, type and grade, never cut. `hubs` and the reach '
-      + 'samples are cut at 10 with their true totals in `truncated`, so treat them as a '
-      + 'headline and ask `flow`, `erd`, `coupling` or `search` for the rest. '
-      + '`federation` is the census of what LEAVES this pack: `calls` / `answered` / '
-      + '`unmatched` count the ROUTES this project calls and does not serve, `projects` names '
-      + 'the registered projects that answer them, `byProject` breaks that down per project '
-      + '({project, sites, routes}) and `unmatchedRoutes` lists the ones nobody registered '
-      + 'serves, each with the `service` the caller named for it when it named one, which is '
-      + 'the project to register. `sites` counts the METHODS in this pack that make the call, so one route '
-      + 'called from two services is one route and two sites. Every entry of `gaps` and `diagnostics` '
-      + 'carries `remedy`, the one thing to do when the engine knows it: {action:"declare", key, example} '
-      + 'a profile key with a short example value, {action:"flag", flag, example} a `cascade analyze` flag, '
-      + '{action:"run", command} or {action:"mode", mode}; null says the engine knows no single fix. '
-      + 'A diagnostic that stands for many carries `count` and its first sentences in `examples`: the schema '
-      + 'reader\'s are one per kind, with the gaps they make (catalog-tables-unread, catalog-rules-assumed, '
-      + 'catalog-read-in-part) in `gaps`. '
-      + '`axisRemedies` does the same for each axis that is not whole, and `routeRemedy` for the routes '
-      + 'whose own address is a guess. `groupRule` says what `reach.groups` counts: {kind:"path"}, the '
-      + 'first segment of a route below its deployment prefix, or {kind:"declared", packageDepth}, the modules '
-      + 'the profile declares.',
+    description: 'Pack census, route-to-table reach, code-axis counts, hubs, gaps and remedies. Read axes first: degraded axes make counts lower bounds; absent axis differs from zero. Unresolved-call count may be unknown. Unreached statements are not proven dead code. Mode defaults conservative; strict may exclude all call paths. Default depth has no hop cap (node cap still applies). Kind/type/grade censuses are complete; hubs and reach samples are capped at10 with true totals in truncated. Federation counts outbound routes separately from call sites, registered answering projects and unmatched routes. Diagnostics/gaps may carry remedy, count and examples; null remedy means no known single fix. groupRule distinguishes path grouping from declared attribution.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -81,39 +82,7 @@ export const TOOLS = Object.freeze({
     fn: tools.search,
   },
   browse: {
-    description:
-      'LIST one kind of thing in this pack, with the numbers you would pick by already on '
-      + 'each row. Use it when you do not have a name yet: `search` needs one, this does not. '
-      + 'kind=table gives {table, comment, columns, statementsRead, statementsWrite, endpoints, '
-      + 'groups, screens}; kind=column {column, table, type, pk, comment, reads, writes, '
-      + 'endpoints, screens}; '
-      + 'kind=statement {statement, type, tables, hasUnresolved, hasStringSubst, file, line, '
-      + 'endpoints}; kind=endpoint {endpoint, httpMethod, path, group, handlerShort, handlers, '
-      + 'statements, tables}; kind=symbol {symbol, owner, short, file, line, transactional, '
-      + 'mapperMethod, external}. `endpoints` on a row is how many HTTP endpoints reach it, '
-      + 'from ONE per-pack walk in `mode` (strict|conservative|heuristic, default conservative) with '
-      + 'no hop cap, which is the same forward walk '
-      + '`flow` draws and `map` and `coupling` count on, so a wider or deeper walk could reach '
-      + 'more and `limits` says so. Every other count on a row is counted in that mode too, so '
-      + 'a list asked in the mode of the answer beside it counts what that answer walks. '
-      + '`screens` on a table or a column row is the same number '
-      + 'one lane further out, from the `walkScreens` census `browse kind=screen` lists and '
-      + 'the overview counts; it is ABSENT (not 0) on a pack with no screen axis. '
-      + 'kind=symbol REQUIRES query (2 characters or more), because '
-      + 'a pack carries tens of thousands of methods. `query` is a case-insensitive substring '
-      + 'over the row\'s id plus its comment (a table or a column), its file (a statement) or '
-      + 'its handler methods (an endpoint). `table=` narrows kind=column to one table\'s '
-      + 'columns. `sort` is one of statements|endpoints|groups|columns|name for a table, '
-      + 'writes|reads|endpoints|name for a column, tables|name for a statement, '
-      + 'tables|statements|path for an endpoint, endpoints|tables|name for a screen, and name '
-      + 'for a symbol; the default is the '
-      + 'first of those, which puts the busiest row first. `counts` gives the pack total for '
-      + 'every kind, so a caller knows what the other kinds hold without asking. `census` names '
-      + 'the walk the row counts come from ({mode, depth}). A route this '
-      + 'pack CALLS over HTTP and does not serve is neither listed nor counted. Empty '
-      + '"not-shipped" means the lane that would have produced this kind never ran; '
-      + '"not-in-this-axis" means the query matched none of the rows that exist. limit 1..500 '
-      + '(default 200), offset pages it.',
+    description: 'Paged table/column/statement/endpoint/symbol/screen census. Counts use the same conservative-by-default forward walk as flow, no hop cap; inspect limits for exclusions. Missing screen axis omits screens counts, not zero. kind=symbol requires query of2+ characters. Query matches IDs/comments/files/handlers case-insensitively, not source full text. table restricts columns. Sort: table statements|endpoints|groups|columns|name; column writes|reads|endpoints|name; statement tables|name; endpoint tables|statements|path; screen endpoints|tables|name; symbol name. Defaults busiest first; stable offset pagination. Empty not-shipped means missing axis, not absence.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -218,71 +187,12 @@ export const TOOLS = Object.freeze({
     fn: tools.transactions,
   },
   flow: {
-    description:
-      'The chain behind one API call: if I hit this endpoint, which code does it run through '
-      + 'and which tables does it end at? Returns entry, services, mapper statements and '
-      + 'tables. Service and statement rows carry hops and the walked path; table rows carry '
-      + 'hops and the statement they came through (via). Walking DOWN, hop 0 is the handler '
-      + 'method (endpoint=<METHOD /path>, or the endpoint itself when it has no handler edge) '
-      + 'or the method you passed (symbol=<owner#name>). Walking UP, hop 0 is the TARGET, the '
-      + 'column, table, statement or method you are changing, and a handler method used as '
-      + 'the target includes its own route at hop 1. Every row carries the WEAKEST grade on '
-      + 'its path, so a chain through one MAY_CALL is SOUND_SET even where its last edge is '
-      + 'EXACT. mode=strict often returns NOTHING, because controller to service is a call we '
-      + 'cannot prove and it sits below the strict floor; the limits and walk.note then say '
-      + 'so, and an empty band there is the mode rather than an absence. With no depth the walk '
-      + 'goes as far as the graph goes, as every census and impact tool does, and the node cap is '
-      + 'its guard; a depth (1..8) narrows it, and what lies past that cap is unknown, not absent. `layers` is '
-      + 'the SAME walk folded per hop: one entry per hop 1..depth-reached with how many nodes '
-      + '/ services / statements / tables sit there and their link grades. It is a census, '
-      + 'never cut by limit, and its grade counts sum to walk.byLinkGrade. Layers cover '
-      + 'WALKED nodes only, so a table that a reached statement names but the walk never '
-      + 'stepped onto (its statement sat at the depth cap) is in no layer and is counted in '
-      + 'walk.beyond.tables instead. direction=up runs from a column, table, statement or '
-      + 'method back to the HTTP endpoints that can reach it, which is the change-impact '
-      + 'question, and every endpoint carries the weakest grade on its path. Walking up, pass '
-      + 'exactly one of endpoint/column/table/statement/symbol; a screen has nothing upstream. '
-      + 'Up from an ENDPOINT is "where is this API used": the walk starts at the route and '
-      + 'climbs what calls it over HTTP, the frontend functions and the screens that render '
-      + 'them (and any client in this pack), with no statements lane; the route\'s own address '
-      + 'grade caps every row, and on a pack with no frontend those two lanes say not-shipped. '
-      + 'The lanes are then target, mapper statements, service layer and endpoints '
-      + '(no tables lane: the target IS that side), with no depth cap either unless one is asked for, the handler method '
-      + 'is a service row flagged `handler`, and the endpoints are DERIVED from its HANDLES '
-      + 'edges rather than walked, so a route above a handler that sat at the depth cap is in '
-      + 'no layer and is counted in walk.beyond.endpoints. A statement or symbol target '
-      + 'reports the statements lane as "not-in-this-axis", because nothing upstream of those '
-      + 'is a statement, rather than "none". Each endpoint row also carries `walkedPath`: its '
-      + 'handler\'s path plus the HANDLES edge (`path` on that row is the ROUTE). Empty '
-      + '"not-shipped" on the services or endpoints lanes means the pack has no code axis, '
-      + 'because the Java lane did not run, and NOT that no endpoint reaches this. There is '
-      + 'no list mode upstream. direction=down also starts at a SCREEN (screen=<its composed '
-      + 'router path>), which is the other end of the round trip: the lanes are then its own '
-      + 'component functions, the api functions they call, the routes those call, and the '
-      + 'services, statements and tables below them, with the same default depth. '
-      + 'On a pack with a frontend the UP direction gains the same '
-      + 'two lanes at the far end (webFunctions, then screens), and `walk.laneNames` says which '
-      + 'lanes this answer has. A row marked observed:true was confirmed by a browser recording '
-      + '(--har), which is a marker beside the grade and never a step of the walk. Without '
-      + 'endpoint/screen/symbol it lists the walkable endpoints (query=<substring> over "METHOD '
-      + 'path handler"), or the walkable screens with kind=screen (query over path, label, title '
-      + 'and component). Lists are cut by limit. Chain mode pages too: offset cuts EVERY lane at the '
-      + 'same place in the walk\'s own order, so a caller that wants more of one lane asks again with '
-      + 'that lane\'s truncated nextOffset and keeps that lane\'s rows. ON A SERVER THAT '
-      + 'SERVES SEVERAL PROJECTS the chain CROSSES HTTP. A call to a route this pack does not '
-      + 'serve normally stops the walk; when another registered project serves that route, the '
-      + 'same walk continues there and its rows join these lanes carrying `project`, `federated` '
-      + 'and `viaHttp`, with hops continued and the path grade weakened by the crossing, which is '
-      + 'SOUND_SET at best and HEURISTIC when the method or the target project was not certain. '
-      + '`answer.federation` names every crossing, every call that matched no registered project '
-      + '(still listed on a single-project server, because registering that project is the '
-      + 'remedy) and every project that was skipped, `basis.siblings` names every other pack this '
-      + 'answer walked, and `walk` and `layers` describe THIS project\'s walk only. Siblings are '
-      + 'read from their committed packs, never from their working-tree overlays. federate=false '
-      + 'answers from this pack alone.',
+    description: 'Graded impact chain; use code_trace for recorded intermediate declarations. Down: endpoint, symbol or screen to services/statements/tables; without a target lists endpoints (or kind=screen). Up: exactly one endpoint/column/table/statement/symbol to callers/routes/screens; no upstream list or screen target. Hop0 is handler/method/target. Rows carry weakest path grade; strict may exclude calls, so empty is not proof of absence. Default no hop cap, bounded by node cap; depth narrows traversal and beyond-cap results remain unknown. layers is an uncut census of walked nodes, not beyond-cap derived endpoints/tables; walk.beyond discloses those. Handler targets include their own route at hop1. Missing axes use not-shipped; upstream statement/symbol statements lane uses not-in-this-axis. observed is recording evidence, not an execution step. offset pages each lane independently: retain only that lane when following its nextOffset. Federation defaults on: crosses registered HTTP routes using committed sibling packs (not overlays), weakest crossing SOUND_SET at best, HEURISTIC if uncertain; rows carry project/federated/viaHttp, basis.siblings names packs, unmatched/skipped are disclosed. walk/layers describe only this project. compact=true deduplicates paths and bounds answer bytes; full mode remains default.',
     inputSchema: {
       type: 'object',
       properties: {
+        compact: { type: 'boolean', description: 'default false; deduplicate paths and bound answer bytes when true' },
+        maxBytes: { type: 'integer', minimum: 4096, maximum: 262144, description: 'compact=true only: answer byte budget, default 32768' },
         endpoint: { type: 'string', description: '"METHOD /path" key of an endpoint node: down, the code it runs; up, what calls it' },
         screen: { type: 'string', description: 'direction=down entry: a screen\'s composed router path, e.g. "/things/list"' },
         kind: { type: 'string', enum: ['endpoint', 'screen'], description: 'list mode only: which entries to list (default endpoint)' },
@@ -339,32 +249,7 @@ export const TOOLS = Object.freeze({
     fn: tools.erd,
   },
   coupling: {
-    description:
-      'Which API group writes what another API group reads? Two groups can depend on each '
-      + 'other through the database with no call edge between them, and this finds those '
-      + 'pairs. A group is the FIRST PATH SEGMENT of an endpoint (/product/update/{id} gives '
-      + 'product; an empty one gives (root)), read below the prefix the application is deployed '
-      + 'under where its lane knows one (/api/v1/users gives users). It is a naming habit, not a module boundary '
-      + 'anyone declared. axis=column (default) pairs groups through a shared column; '
-      + 'axis=table through a shared table, where the EXECUTES access decides the side '
-      + '(write or delete makes a writer, read makes a reader). Returns `groups` with '
-      + 'per-group endpoint, write and read counts, ranked `pairs` (writer, then reader, with '
-      + 'the shared items, cut by limit), `cells` (every pair without its items, so the whole '
-      + 'matrix and never cut) and a `summary`. We attribute a statement to EVERY group whose '
-      + 'endpoints can reach it, using the SAME forward walk `flow` draws, at this view\'s '
-      + 'own default depth, the one every walk from a route has (the Flow tab opens on it too). Every HANDLES target of a route is '
-      + 'walked, and mode and depth apply. So a statement behind a shared service counts for '
-      + 'all of them: `sharedStatements` lists the ones reached by 3 or more groups (a capped '
-      + 'disclosure rather than a page), each pair\'s `viaShared` counts the items that ON AT '
-      + 'LEAST ONE SIDE are carried only by statements 3 or more groups reach, and '
-      + '`sharedVia` names up to 5 of THAT pair\'s own such statements. Sharing inside one '
-      + 'group is not coupling, so it is counted apart as summary.selfOnlyItems, and an item '
-      + 'only written or only read within the walk is summary.writeOnlyItems / readOnlyItems, '
-      + 'which is why items === coupledItems + selfOnlyItems + writeOnlyItems + '
-      + 'readOnlyItems. `walk` counts what the walks did NOT look at (depth cap, node cap, '
-      + 'links below the mode floor), so an empty matrix can be the mode rather than an '
-      + 'absence. A direct call from one group to another is not in this view, and empty '
-      + '"not-shipped" means the pack has no code axis and therefore no endpoints.',
+    description: 'Database-mediated writer→reader group pairs, not direct calls. Groups use first route segment below deployment prefix unless declared otherwise; inferred groups are not business boundaries. axis=column default; table uses EXECUTES access. Statements belong to every group whose handlers reach them in the requested mode/depth (default conservative, no hop cap). Ranked pairs page with shared items; cells retain the whole count matrix. Shared statements reached by3+ groups are disclosed with capped samples; viaShared counts items carried only by such statements on at least one side. Self-only/write-only/read-only items are counted separately. Inspect walk cuts and mode exclusions before interpreting empty results; not-shipped means missing code axis.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -378,61 +263,7 @@ export const TOOLS = Object.freeze({
     fn: tools.coupling,
   },
   map: {
-    description:
-      'The WHOLE pack as one relation map: the picture you open before you have a question. '
-      + 'For one node\'s surroundings, use `neighborhood`. Returns every API group, every '
-      + 'endpoint under it, every table those endpoints reach, and the joins the mapper SQL '
-      + 'makes between those tables, as `nodes` [{id, kind: group|endpoint|table|statement, '
-      + 'label, group?, degree, + the kind\'s facts}] and `links` [{source, target, kind: '
-      + 'member|touches|joins|executes, access?, grade, statements?, witness?}]. A group is '
-      + 'the FIRST PATH SEGMENT of an endpoint (/product/update/{id} gives product; an empty '
-      + 'one gives (root)), read below the prefix the application is deployed under where its '
-      + 'lane knows one, which is a naming habit rather than a declared module boundary, '
-      + 'and `member` is the group to endpoint link. A `touches` link is endpoint to table, '
-      + 'ONE per pair, with `access` aggregated (read / write / delete / read+write) over the '
-      + 'statements that endpoint reaches and `statements` counting them. Its `grade` is the '
-      + 'STRONGEST of the paths that produce it, each graded by its WEAKEST link (the walk to '
-      + 'the statement, then that statement\'s own SQL edge), the same rule `flow` grades its '
-      + 'tables lane by, so one confirmed route makes the touch EXACT while a table an '
-      + 'endpoint can only reach through a call we could not prove stays SOUND_SET. '
-      + 'layers:["statements"] adds the mapper statements as their own nodes and REPLACES '
-      + 'each `touches` shortcut with the two real steps (endpoint executes statement, '
-      + 'statement executes table). layers:["screens"] adds the OTHER end of the round trip: '
-      + 'one node per SCREEN that reaches a route this pack serves, and one `calls` link per '
-      + '(screen, route) pair, from the same forward walk `browse kind=screen` lists and the '
-      + 'overview counts. A screen that reaches no drawn route is not on the map, and '
-      + '`summary.screens` against `summary.screensTotal` says how many those are. '
-      + '`joins` are the JOINS edges between drawn tables, '
-      + 'undirected and once, with the count of statements that make the join. Attribution is '
-      + 'by reachability, the SAME forward walk `flow` draws and `coupling` counts on, at '
-      + 'no hop cap by default. mode=strict usually draws no endpoint to table line at all, '
-      + 'because controller to service is a call we cannot prove. `summary` gives groups / '
-      + 'endpoints / tables (the whole schema) / tablesTouched (how many are on the map) / '
-      + 'links / the walk\'s cut census, and `summary.shown` how many of each kind survived '
-      + 'the node cap. `limit` is that cap (default 6000, max 20000) and `maxBytes` is the '
-      + 'ANSWER budget in measured bytes of the nodes and links payload (default 524288, max '
-      + '8388608). A whole-pack map of a 3 800-endpoint project serialises to megabytes, so '
-      + 'the byte budget is what actually bounds it. Past either one, the answer is cut BY '
-      + 'KIND, statements first, then endpoints, then tables, and NEVER groups, keeping the '
-      + 'best-connected of the kind being cut, and `limits` names exactly how many of each '
-      + 'went and which budget cut it (`summary.cutBy`, `summary.bytes`). Tables no endpoint '
-      + 'reaches are NOT drawn and their number is disclosed. Empty "not-shipped" means the '
-      + 'pack has no code axis and therefore no endpoints. '
-      + 'ON A SERVER THAT SERVES SEVERAL PROJECTS the map keeps going where a request does: an '
-      + 'endpoint here that calls a route ANOTHER registered project serves gets a `calls` link '
-      + '(`federated: true`) to that project\'s own endpoint node, which is the portal, and '
-      + 'under the portal that route\'s OWN picture (its tables, its statements, its joins). '
-      + 'Every id from another pack is namespaced `<project>|<id>` and every such node and link '
-      + 'carries `project`, so two services that both have an `orders` table are two nodes. One '
-      + 'node per sibling, `id: "project:<id>", kind: "project"`, is the skeleton those portals '
-      + 'hang off; the sibling\'s own groups are not drawn. NOTHING IS MERGED: only what THIS '
-      + 'project\'s requests reach is added, and no line joins two projects\' tables, because '
-      + 'two services share no foreign key. One node cap and one byte budget bound the whole '
-      + 'picture, and a federated node gives way before this pack\'s own node of the same kind. '
-      + '`summary.federated` counts what came from elsewhere, `answer.federation` says what was '
-      + 'crossed, skipped or unmatched, and `basis.siblings` names every other pack this answer '
-      + 'walked. federate=false answers from this pack alone, byte for byte as it did before '
-      + 'federation existed.',
+    description: 'Bounded whole-pack relation map: inferred route groups, endpoints, reached tables and SQL joins; neighborhood focuses one node. Groups are naming patterns unless declared. touches aggregates access per endpoint/table; grade is strongest available path, each path graded by weakest link. layers statements replaces touch shortcuts with execute steps; screens adds screens reaching drawn routes (others counted, not drawn). Default conservative walk has no hop cap; strict can remove call reachability. Node limit and measured nodes+links maxBytes cut by kind, retaining connected nodes and groups; summary/limits disclose cuts and omitted tables. Federation adds only reached sibling routes, namespaced project IDs and project portals, never merges tables or infers cross-project joins. Read federation/basis.siblings for crossings and limits; sibling data comes from committed packs, not overlays. Missing code axis means not-shipped, not no dependencies.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -690,7 +521,7 @@ export function callTool(name, args, ctx) {
       basis: ctx.basis,
       trust: { ...(ctx.trust ?? {}), knownGaps: [...new Set(gaps)] },
       limits: [...(ctx.limits ?? []), ...axisLimits(axes)],
-      pack: ctx.pack,
+      pack: ctx.pack, structure: ctx.structure, indexStatus: ctx.indexStatus,
       // The project's reading convention (SPEC §6.2). Today the only key the
       // query layer consumes is moduleAttribution.packageDepth, which decides
       // how `coupling` and `map` group endpoints into modules.

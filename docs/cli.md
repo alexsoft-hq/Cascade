@@ -39,6 +39,35 @@ one.
 
 ---
 
+## `cascade code`
+
+Query the same persistent code-structure tools served over MCP. Output is a
+JSON response including basis, trust, limits and pagination information.
+
+```sh
+cascade code <briefing|architecture|search|outline|trace|context|snippet|status> [--root <dir> | --project <id> | --pack <dir>]
+```
+
+| Action | Options |
+|---|---|
+| `briefing` | `--depth N`, `--limit N`, `--max-bytes N` |
+| `architecture` | `--depth N`, `--limit N`, `--offset N`, `--max-bytes N` |
+| `search` | `--query <text>`, `--kind all\|file\|declaration`, `--limit N`, `--offset N` |
+| `outline` | `--file <indexed-path>`, `--limit N`, `--offset N` |
+| `trace` | `--symbol <declaration-id>`, `--direction inbound\|outbound\|both`, `--depth N`, `--limit N`, `--offset N`, `--max-bytes N` |
+| `context` | `--query <text>`, `--max-bytes N`, `--limit N` |
+| `snippet` | `--symbol <declaration-id>` or `--file <indexed-path>`; `--from-line N`, `--to-line N`, `--max-bytes N`, `--max-lines N` |
+| `status` | Show current index/refresh status without triggering analysis |
+
+Source-backed queries automatically refresh saved changes before answering.
+`--no-watch` reads the existing snapshot instead, with unknown freshness.
+The same flag disables automatic analysis for `cascade mcp` and `cascade view`.
+An unavailable source tree remains a disconnected snapshot. Failed refreshes
+are errors rather than silently current answers. `briefing`, `architecture` and `context` budgets count UTF-8
+bytes of answer JSON, and `snippet` budgets source-text bytes; neither is a
+model-token count. See [code intelligence](code-intelligence.md) for scope and
+the difference between structure and graded impact.
+
 ## `cascade setup`
 
 ```
@@ -200,7 +229,7 @@ What each client gets:
 |---|---|---|
 | `claude-code` (default) | `<root>/.mcp.json`, key `mcpServers.cascade` | `<root>/CLAUDE.md`, a managed block |
 | `cursor` | `<root>/.cursor/mcp.json`, key `mcpServers.cascade` | `<root>/.cursor/rules/cascade.mdc`, the whole file, `alwaysApply: true` |
-| `codex` | not written: a `[mcp_servers.cascade]` TOML block is **printed** for `~/.codex/config.toml` | `<root>/AGENTS.md`, a managed block |
+| `codex` | not written: a `[mcp_servers.cascade]` TOML block is **printed** for trusted-project `.codex/config.toml` or `~/.codex/config.toml` | `<root>/AGENTS.md`, a managed block |
 | `all` | the three above | |
 
 - `--client <name>` — one of `claude-code`, `cursor`, `codex`, or `all`
@@ -212,6 +241,12 @@ What each client gets:
   `--root`.
 - `--root <dir>` — the project directory to write into (default: the current
   directory).
+
+The generated entry pins the selected registry directory in `env.CASCADE_HOME`,
+so a client launched from another environment still finds the same project.
+It does not copy other environment variables or credentials. Codex supports
+[project-scoped MCP configuration](https://learn.chatgpt.com/docs/extend/mcp?surface=cli)
+for trusted projects; the command prints a block for you to merge.
 
 **The command in the config is always absolute**: `command` is the running
 `node` binary and the first argument is the real path of `bin/cascade.mjs`,

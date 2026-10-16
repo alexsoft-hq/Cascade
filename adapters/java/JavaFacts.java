@@ -97,7 +97,7 @@ public class JavaFacts {
     // mixing two generations of facts in one graph. BUMP IT whenever the records
     // this file emits change in any way. Mirrored (and asserted) in
     // src/core/worker_versions.mjs.
-    static final String VERSION = "javafacts/24";
+    static final String VERSION = "javafacts/25";
     // Internal sort-key field separator. Never emitted; unlikely to occur in code.
     static final char SEP = '\u0001';
 
@@ -336,6 +336,55 @@ public class JavaFacts {
             this.lineMap = cu.getLineMap();
         }
 
+        void emitStructure() {
+            final String source;
+            try { source = cu.getSourceFile().getCharContent(true).toString(); }
+            catch (Exception ignored) { return; }
+            cu.accept(new TreeScanner<Void, String>() {
+                @Override public Void visitClass(ClassTree t, String owner) {
+                    String name = t.getSimpleName().toString();
+                    if (name.isEmpty()) return super.visitClass(t, owner);
+                    String qualified = owner == null ? (pkg.isEmpty() ? name : pkg + "." + name) : owner + "$" + name;
+                    emitDeclaration(t, t.getKind().toString().toLowerCase(java.util.Locale.ROOT), name, qualified, owner, source, null);
+                    return super.visitClass(t, qualified);
+                }
+                @Override public Void visitMethod(MethodTree t, String owner) {
+                    if (owner != null) {
+                        String name = t.getName().toString();
+                        emitDeclaration(t, name.equals("<init>") ? "constructor" : "method", name, owner + "#" + name, owner, source, t);
+                    }
+                    return super.visitMethod(t, owner);
+                }
+            }, null);
+        }
+
+        void emitDeclaration(Tree t, String kind, String name, String qualified, String owner, String source, MethodTree method) {
+            long start = srcPos.getStartPosition(cu, t), end = srcPos.getEndPosition(cu, t);
+            if (start < 0 || end < start || end > source.length()) return;
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("kind", "declaration"); r.put("declarationKind", kind);
+            r.put("file", rel); r.put("name", name); r.put("qualifiedName", qualified); r.put("owner", owner);
+            r.put("line", lineMap.getLineNumber(start)); r.put("endLine", lineMap.getLineNumber(end));
+            r.put("startColumn", lineMap.getColumnNumber(start)); r.put("endColumn", lineMap.getColumnNumber(end));
+            r.put("startOffset", start); r.put("endOffset", end); r.put("offsetEncoding", "utf16");
+            List<String> params = new ArrayList<>();
+            if (method != null) {
+                for (VariableTree param : method.getParameters()) params.add(param.toString());
+                long headerEnd = method.getBody() == null ? end : srcPos.getStartPosition(cu, method.getBody());
+                r.put("signature", source.substring((int) start, (int) headerEnd).trim());
+                r.put("signatureKind", "source");
+            } else {
+                ClassTree type = (ClassTree) t;
+                String signature = type.getModifiers().toString() + kind + " " + name;
+                if (!type.getTypeParameters().isEmpty()) signature += "<" + String.join(", ", type.getTypeParameters().stream().map(Object::toString).toArray(String[]::new)) + ">";
+                if (type.getExtendsClause() != null) signature += " extends " + type.getExtendsClause();
+                if (!type.getImplementsClause().isEmpty()) signature += " implements " + type.getImplementsClause();
+                r.put("signature", signature.trim()); r.put("signatureKind", "ast");
+            }
+            r.put("params", params);
+            sink.add("2declaration" + SEP + rel + SEP + String.format(java.util.Locale.ROOT, "%012d", start), r);
+        }
+
         // 1-based start line of a tree node, or 0 when unavailable.
         int lineOf(Tree t) {
             try {
@@ -403,6 +452,7 @@ public class JavaFacts {
                     return super.visitVariable(v, p);
                 }
             }, null);
+            emitStructure();
             emitInvocations(cu);
             emitConstructions(cu);
             for (Tree decl : cu.getTypeDecls()) {
@@ -473,7 +523,7 @@ public class JavaFacts {
 
         /**
          * EVERY TYPE THIS FILE CONSTRUCTS with `new`, as written, with the line
-         * of its first construction (javafacts/24). One record per file, one
+         * of its first construction (javafacts/25). One record per file, one
          * entry per name, in name order. Which of them is an EntityManagerFactory
          * the project builds by hand is a rule pack's question
          * (src/core/rules/packs/jpa.json); this only says what `new` names.
@@ -843,7 +893,7 @@ public class JavaFacts {
             // mybatis-plus.json reads it from the `type` record's supertypes.
             emitMpEntity(ct, fqn, typeAnns, annotations, ext);
             // The property keys a class that declares a @Bean method puts
-            // (javafacts/24): where a factory and the properties it is given are made.
+            // (javafacts/25): where a factory and the properties it is given are made.
             if (declaresBeanMethod(ct)) emitPropertyKeys(fqn, ct);
 
             // --- pass 1: instance fields (class/interface-typed) ---------------
@@ -1578,7 +1628,7 @@ public class JavaFacts {
         // budget, or a string past its length, is marked cut rather than
         // recorded in part, so a reader can say what it did not see.
         /**
-         * ONE `@Bean` METHOD (javafacts/24): its return type and parameter types
+         * ONE `@Bean` METHOD (javafacts/25): its return type and parameter types
          * as written, and the types its own body constructs with `new`. Whether
          * the bean is an EntityManagerFactory, built by hand or from Spring Boot's
          * builder, is the jpa rule pack's question; this records what it reads.
@@ -1618,7 +1668,7 @@ public class JavaFacts {
         }
 
         /**
-         * THE PROPERTY KEYS A CONFIGURATION CLASS PUTS (javafacts/24): every
+         * THE PROPERTY KEYS A CONFIGURATION CLASS PUTS (javafacts/25): every
          * `put`, `putIfAbsent` or `setProperty` call with two arguments in the
          * class's own methods (lambdas and anonymous classes in them too) whose
          * key is a string literal or a name, with the value as far as its form

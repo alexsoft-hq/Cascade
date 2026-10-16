@@ -43,40 +43,46 @@ const BLOCK_RE = /^<!-- cascade:begin -->$[\s\S]*?^<!-- cascade:end -->$/m;
  * @returns {string} the body, with no trailing newline and no markers
  */
 export function rulesBody(projectId) {
-  return `## Cascade: ask the impact graph before touching data-facing code
+  return `${structureRules(projectId)}\n\n${impactRules()}`;
+}
 
-This project has a change-impact graph served over MCP by the \`cascade\` server
-(project \`${projectId}\`). It knows which SQL statements, HTTP endpoints and screens reach
-every table and column, with a grade on each edge.
+function structureRules(projectId) {
+  return `## Cascade: read code structure and change impact before editing
 
-Ask before you edit any of these:
-- a MyBatis mapper XML or an annotated mapper, a JPA entity or repository, a DDL file
-- a controller, a route, or a service method a controller reaches
-- a frontend screen, or a frontend function that calls the backend
+Use the \`cascade\` MCP server (project \`${projectId}\`) for persistent structure
+and graded change impact. Its selected analysis lanes do not cover every file.
 
-How to ask:
-1. \`changed_impact\` with the files you are about to change, or have changed and
-   not committed. It lists the endpoints, screens, tables and columns in the
-   blast radius, and it reads your working tree, so it is never behind.
-2. Before renaming or retyping a column, run \`column_impact\`, then
-   \`endpoint_impact\` and \`screen_impact\` on it, and put every reader AND writer
-   they name into your plan.
-3. \`flow\` on an endpoint or a screen shows the whole path down to the tables it
-   ends at. \`overview\` first when you do not know what is in the pack.
+Start each session with \`session_briefing\` for scope, freshness and recorded connections.
+For code discovery, inspect \`architecture\`, then \`code_search\` or
+\`file_outline\`. Use \`code_context\` for a bounded set of declarations and their
+relationships; use \`code_trace\` for callers/callees (callback references are not execution),
+and \`code_snippet\` for verified source. Reuse structure across
+sessions; search source for literals, unsupported areas and reported gaps.
+\`index_status\` reports the indexed scope and freshness. Automatic refresh reads
+saved files; it cannot see unsaved editor buffers.`;
+}
+
+function impactRules() {
+  return `Before editing a mapper, entity, schema, controller, service or frontend:
+1. Ask \`changed_impact\` with the files; check its freshness and overlay status.
+2. For a column change, ask \`column_impact\`, \`endpoint_impact\` and
+   \`screen_impact\`; include both readers and writers in the plan.
+3. Use \`flow\` for a screen/API-to-table path and \`overview\` for impact coverage.
+   Prefer \`compact: true\` with a small byte budget; read each needed lane's omitted counts
+   and page it when necessary. A shortened list is not a complete impact census.
 
 How to read an answer:
-- \`trust\`, \`limits\` and \`truncated\` come with every answer. Read them before
-  the list. Each \`limits\` entry names something the graph could not see.
+- Read \`trust\`, \`limits\`, \`truncated\` and any omitted counts before the list.
 - \`EXACT\` is proved. \`SOUND_SET\` is a candidate set, so check each member.
   \`HEURISTIC\` and \`RUNTIME_ONLY\` are hints, not evidence.
-- An empty list means "none" only when \`empty\` says \`none\`. \`not-shipped\` and
-  \`degraded\` mean unknown, which is not the same as zero.
-- A \`basis.freshness\` of \`behind\` means the pack predates the code you see.
-  \`changed_impact\` still answers from the working tree.
+- Empty means no match in the indexed scope, not proof of no callers or impact.
+- Check \`basis.freshness\` as well as coverage. If it is \`behind\` or \`unknown\`,
+  refresh the analysis or verify the affected source before drawing conclusions.
+  A failed refresh is not a current answer.
+- Structure relations explain organization; only the graded impact graph explains
+  possible propagation. Directory groups do not establish architectural intent.
 
-After the edit, run \`changed_impact\` again and put the endpoints and screens it
-names into the commit message or the pull request, so a reviewer sees the same
-radius you did.`;
+After editing, ask \`changed_impact\` again and report its evidence and limits.`;
 }
 
 /**
@@ -98,7 +104,7 @@ export function rulesBlock(projectId) {
  */
 export function cursorRuleFile(projectId) {
   return '---\n'
-    + 'description: Ask the Cascade impact graph before changing data-facing code\n'
+    + 'description: Read Cascade code structure and change impact before editing\n'
     + 'alwaysApply: true\n'
     + '---\n\n'
     + `${rulesBody(projectId)}\n`;
@@ -134,11 +140,12 @@ export function mergeManagedBlock(existing, block) {
  * relative path is the single most common reason a client reports the server as
  * failed.
  *
- * @param {{execPath:string, cliPath:string, projectId:string}} spec
+ * @param {{execPath:string, cliPath:string, projectId:string, cascadeHome?:string}} spec
  * @returns {{command:string, args:string[]}}
  */
-export function mcpServerEntry({ execPath, cliPath, projectId }) {
-  return { command: execPath, args: [cliPath, 'mcp', '--project', projectId] };
+export function mcpServerEntry({ execPath, cliPath, projectId, cascadeHome }) {
+  return { command: execPath, args: [cliPath, 'mcp', '--project', projectId],
+    ...(cascadeHome ? { env: { CASCADE_HOME: cascadeHome } } : {}) };
 }
 
 /**
@@ -175,9 +182,8 @@ export function mergeMcpConfig(existing, entry) {
 }
 
 /**
- * The TOML block Codex wants in its own config file. Codex keeps one config for
- * every project rather than one per repository, so this is printed for the
- * reader to paste rather than written by this command.
+ * The TOML block for a trusted project's or the user's Codex config file.
+ * Print it for an explicit merge instead of overwriting an existing TOML file.
  *
  * @param {{command:string, args:string[]}} entry
  * @returns {string} the block, newline-terminated
@@ -186,7 +192,8 @@ export function codexTomlBlock(entry) {
   const str = (s) => JSON.stringify(String(s));
   return `[mcp_servers.${SERVER_KEY}]\n`
     + `command = ${str(entry.command)}\n`
-    + `args = [${entry.args.map(str).join(', ')}]\n`;
+    + `args = [${entry.args.map(str).join(', ')}]\n`
+    + (entry.env ? `env = { ${Object.entries(entry.env).map(([key, value]) => `${str(key)} = ${str(value)}`).join(', ')} }\n` : '');
 }
 
 /**
@@ -217,8 +224,8 @@ export function filesFor(client, { projectId, entry }) {
     ];
   }
   if (client === 'codex') {
-    // No config file: Codex reads one TOML for every project, and a per-project
-    // command that edits a file in the home directory would be a surprise.
+    // Print TOML for the user to merge into project or user configuration.
+    // An existing TOML file may carry unrelated settings this command does not parse.
     return [
       { rel: 'AGENTS.md', kind: 'managed', content: rulesBlock(projectId) },
     ];

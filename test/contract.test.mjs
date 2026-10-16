@@ -214,3 +214,28 @@ test('makeResponse throws when answer/basis/trust/limits/truncated are entirely 
   // eslint-disable-next-line no-constant-binary-expression
   assert.throws(() => makeResponse(undefined ?? {}), ContractError);
 });
+test('truncated: zero rows fitting a byte budget requires a retry at the unconsumed offset', () => {
+  const shape = validShape();
+  shape.answer = { items: [], empty: { items: 'not-in-this-axis' } };
+  shape.truncated = { any: true, fields: [{ field: 'items', shown: 0, total: 3, order: 'id', nextOffset: null, byteLimited: true, retry: { action: 'increase-maxBytes', offset: 0 } }] };
+  assert.doesNotThrow(() => makeResponse(shape));
+  shape.truncated.any = false;
+  assert.throws(() => makeResponse(shape), ContractError);
+});
+test('truncated: byte-limited retry metadata is validated rather than silently accepted', () => {
+  const variants = [
+    { byteLimited: 'yes' }, { retry: { action: 'increase-maxBytes', offset: 1 } },
+    { byteLimited: true }, { byteLimited: true, retry: { action: 'skip', offset: 1 } },
+    { byteLimited: true, retry: { action: 'increase-maxBytes', offset: -1 } },
+    { byteLimited: true, retry: { action: 'increase-maxBytes', offset: 3 } },
+    { byteLimited: true, retry: { action: 'increase-maxBytes', offset: 1.5 } },
+    { byteLimited: true, nextOffset: 1, retry: { action: 'increase-maxBytes', offset: 2 } },
+  ];
+  for (const variant of variants) {
+    const shape = validShape(); shape.answer.items = [1];
+    shape.truncated = { any: true, fields: [{ field: 'items', shown: 1, total: 3, order: 'id', ...variant }] };
+    assert.throws(() => makeResponse(shape), ContractError, JSON.stringify(variant));
+  }
+  const full = validShape(); full.truncated.fields[0] = { ...full.truncated.fields[0], byteLimited: true, retry: { action: 'increase-maxBytes', offset: 0 } };
+  assert.throws(() => makeResponse(full), ContractError);
+});

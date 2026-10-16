@@ -126,9 +126,9 @@ export function run(ctx) {
   // installer left behind, because a client starts the server from a working
   // directory nobody controls.
   const entry = mcpServerEntry({
-    execPath: process.execPath,
-    cliPath: CLI_PATH,
+    execPath: process.execPath, cliPath: CLI_PATH,
     projectId,
+    cascadeHome: path.resolve(path.dirname(regFile)),
   });
 
   const planned = planFiles(ctx, { clients, root, projectId, entry });
@@ -138,7 +138,7 @@ export function run(ctx) {
   if (clients.includes('codex')) {
     // Codex keeps ONE config for every project, so a per-project command that
     // edited a file in the home directory would be a surprise. It is printed.
-    process.stdout.write('\nCodex reads one config for every project, so this part is yours to paste. Put it in ~/.codex/config.toml:\n\n');
+    process.stdout.write('\nPaste this MCP configuration into the trusted project config .codex/config.toml or your user config at ~/.codex/config.toml:\n\n');
     process.stdout.write(codexTomlBlock(entry));
   }
   if (write && clients.includes('claude-code')) {

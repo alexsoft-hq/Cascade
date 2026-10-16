@@ -50,20 +50,20 @@ export function handleRpc(req, deps) {
       const args = (req.params && req.params.arguments) || {};
       // A notification (no id) never gets a response, even on a bad request.
       if (!name) return isNotification ? null : rpcError(req.id, -32602, 'tools/call requires params.name');
-      let out;
-      try {
-        out = deps.callTool(name, args);
-      } catch (e) {
-        // Tool/dispatch failure → isError result (not a JSON-RPC error), so the
-        // model sees the reason and its code.
-        const code = e && e.code ? ` [${e.code}]` : '';
-        return reply({ content: [{ type: 'text', text: `error${code}: ${e && e.message}` }], isError: true });
-      }
-      return reply({ content: [{ type: 'text', text: JSON.stringify(out) }] });
+      return callRpcTool(deps, name, args, reply);
     }
     default:
       return isNotification ? null : rpcError(req.id, -32601, `method not found: ${req.method}`);
   }
+}
+
+function callRpcTool(deps, name, args, reply) {
+  const success = (value) => reply({ content: [{ type: 'text', text: JSON.stringify(value) }] });
+  const failure = (error) => reply({ content: [{ type: 'text', text: `error${error?.code ? ` [${error.code}]` : ''}: ${error?.message}` }], isError: true });
+  try {
+    const out = deps.callTool(name, args);
+    return out && typeof out.then === 'function' ? Promise.resolve(out).then(success, failure) : success(out);
+  } catch (error) { return failure(error); }
 }
 
 function rpcError(id, code, message) {
@@ -79,6 +79,8 @@ function rpcError(id, code, message) {
 export function serve({ input = process.stdin, output = process.stdout, deps }) {
   return new Promise((resolve) => {
     let buf = '';
+    const pending = new Set();
+    const replyInOrder = orderedReplies(output, pending);
     input.setEncoding('utf8');
     input.on('data', (chunk) => {
       buf += chunk;
@@ -95,12 +97,33 @@ export function serve({ input = process.stdin, output = process.stdout, deps }) 
           continue;
         }
         const resp = handleRpc(req, deps);
-        if (resp) write(output, resp);
+        replyInOrder(resp);
       }
     });
-    input.on('end', () => resolve());
-    input.on('close', () => resolve());
+    finishOnDisconnect(input, output, deps, pending, resolve);
   });
+}
+
+function finishOnDisconnect(input, output, deps, pending, resolve) {
+  let ended = false, disconnected = false;
+  const disconnect = () => { if (!disconnected) { disconnected = true; deps.onDisconnect?.(); } };
+  const finish = () => Promise.allSettled([...pending]).then(() => { disconnect(); resolve(); });
+  const abort = () => { disconnect(); void finish(); };
+  // EOF is a half-close: a piped client can still be waiting for its answers.
+  input.once('end', () => { ended = true; void finish(); });
+  input.once('close', () => { if (!ended) abort(); });
+  input.once('error', abort);
+  output.once('close', abort);
+  output.once('error', abort);
+}
+
+function orderedReplies(output, pending) {
+  let tail = null;
+  return (response) => {
+    if (!tail && !(response && typeof response.then === 'function')) { if (response) write(output, response); return; }
+    const task = (tail ?? Promise.resolve()).then(() => response).then((value) => { if (value && !output.destroyed) write(output, value); }).finally(() => pending.delete(task));
+    pending.add(task); tail = task;
+  };
 }
 
 function write(output, obj) {

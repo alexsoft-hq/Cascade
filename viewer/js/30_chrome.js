@@ -78,6 +78,7 @@ function setLang(lang){
 // `tab=erd`, `tab=tx` and `tab=rules` land where they always did.
 const PLACES=[
   { id:'start', views:['start'] },
+  { id:'code', views:['code'] },
   { id:'trace', views:['trace'] },
   { id:'structure', views:['graph','erd','coupling','tx'] },
   { id:'compare', views:['compare'] },
@@ -138,11 +139,15 @@ function renderPlaceChrome(){
     type:'button', className:'subtab'+(v===STATE.tab ? ' active' : ''), textContent:t(VIEW_KEY[v]),
     onclick:()=> ((v===STATE.tab && Object.hasOwn(SHOWALL, v)) ? showAll(v) : activateTab(v)) }))));
 }
+function loadLandingTab(name){
+  if ((name==='start' || name==='status') && !OV.resp && !OV.loading) loadOverview();
+  if (name==='start') startOnScreen();
+  if (name==='code') codeOnScreen();
+}
 function loadTab(name){
   // Start and Analysis status are both drawn from the one landing answer; the
   // map on Start asks its own question once Start is on screen.
-  if ((name==='start' || name==='status') && !OV.resp && !OV.loading) loadOverview();
-  if (name==='start') startOnScreen();
+  loadLandingTab(name);
   // A tab that draws one answer into one box asks for it once, when the box is empty.
   const lazy=LAZY_TABS[name];
   if (lazy && !byId(lazy.box).hasChildNodes()) lazy.load();
@@ -371,7 +376,7 @@ function applyChrome(){
   renderMetaChrome();
   renderCascadeRail();
   renderAuthoredChrome();
-  renderSnapshotChrome();
+  renderSnapshotChrome(); renderCodeWorkspace();
   document.documentElement.lang=I18N.lang;
 }
 // A TAB HINT, folded. The `data-t-fold` attribute names a PAIR of catalogue keys:

@@ -2,11 +2,12 @@
 
 # <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/cascade-mark-dark.svg"><img src="docs/assets/cascade-mark.svg" width="28" alt=""></picture> Cascade
 
-AI 코딩 에이전트와 그 옆에서 일하는 사람을 위한, 코드에서 컬럼까지 이어지는
-변경 영향 지식 그래프입니다. Apache-2.0.
+AI 코딩을 위한 영속적인 코드 구조와 코드에서 컬럼까지 이어지는 변경 영향도
+분석 도구입니다. 저장된 로컬 변경을 자동으로 반영합니다. Apache-2.0.
 
 - [그림부터 봅니다](#그림부터-봅니다)
 - [무엇에 답하는가](#무엇에-답하는가)
+- [AI 코딩을 위한 코드 컨텍스트](#ai-코딩을-위한-코드-컨텍스트)
 - [지원하는 스택](#지원하는-스택)
 - [설치](#설치)
 - [내 프로젝트에 10분](#내-프로젝트에-10분)
@@ -80,6 +81,46 @@ SAST 와 CodeQL 은 취약점을 찾습니다. Cascade 는 변경이 어디까�
 | 이 엔드포인트를 부르거나 이 화면을 열면 어떤 코드를 지나 어떤 테이블에서 끝납니까? | `flow` |
 | 파일을 고쳤고 아직 커밋하지 않았습니다. 지금 시점의 영향 범위는 어디까지입니까? | `changed_impact` |
 | 서로 호출하지 않으면서 DB 를 통해 데이터를 공유하는 API 그룹 쌍은 어디입니까? | `coupling` |
+
+## AI 코딩을 위한 코드 컨텍스트
+
+세션을 시작할 때 `session_briefing`으로 프로젝트 구조, 주요 진입점, 최신성과
+분석 한계를 짧게 읽습니다. `architecture`는 디렉터리 사이의 실제 기록된
+의존 연결과 그 근거를 보여 줍니다. `code_search`와 `file_outline`으로 파일·타입·
+함수를 찾고, `code_snippet`으로 소스 해시를 확인한 정확한 선언 범위를 읽습니다.
+`code_context`는 관련 선언과 관계를 크기 제한 안에서 모읍니다.
+`code_trace`는 중간 함수를 포함한 호출자·호출 대상 관계를 조회합니다. 로컬 호출,
+변경되지 않는 별칭, import된 함수와 콜백으로 전달된 참조를 구분하며 콜백 실행을
+단정하지 않습니다. 영향도 `flow`는 중복 근거를 공유하는 바이트 제한 압축 응답도
+지원합니다.
+
+뷰어의 **코드(Code)** 작업 공간에서 브리핑 복사, 모듈 연결 탐색, 선언 검색,
+파일 개요와 원문 읽기를 한곳에서 할 수 있습니다.
+```sh
+cascade init --root /path/to/project
+cascade analyze --root /path/to/project
+cascade code briefing --root /path/to/project
+cascade code architecture --root /path/to/project
+cascade code context --root /path/to/project --query OrderService --max-bytes 16384
+cascade mcp --root /path/to/project
+cascade view --root /path/to/project
+```
+
+로컬 소스가 있는 MCP·뷰어 세션은 저장된 변경을 확인하고 분석을 자동 갱신합니다.
+조회는 필요한 갱신을 기다리며, 실패한 분석을 최신 결과로 취급하지 않습니다.
+`--no-watch`는 기존 스냅샷을 조회합니다. 편집기의 미저장 내용은 입력에 포함되지
+않고, 소스에 접근할 수 없는 팩의 최신성은 알 수 없음으로 남습니다. 기존 검증
+게이트는 유지하며 자동 갱신이 새 baseline을 대신 승인하지 않습니다.
+
+구조 인덱스는 선택한 Java·TypeScript·프런트엔드 분석 결과를 재사용합니다.
+모든 언어와 파일을 분석한다는 뜻은 아닙니다. 없는 관계는 미확인 상태이며,
+디렉터리 그룹을 업무 경계나 설계 의도로 단정하지 않습니다. 구조는 별도의 해시와
+분석 범위를 가지며 기존 영향도 그래프의 근거 등급을 바꾸지 않습니다.
+컨텍스트 크기 제한은 모델 토큰 수가 아닌 UTF-8 바이트 기준입니다.
+상세 동작은 [코드 구조와 최신성 계약](docs/code-intelligence.md)과
+[0.9 기능 확인 가이드](docs/ko/code-intelligence-demo.md)를 참고하세요.
+[지원 언어 실전 점검](docs/ko/code-intelligence-evaluation.md)에 Java/JavaScript 예제,
+Ghostfolio와 Cascade 자체 코드를 대상으로 확인한 강점과 한계를 기록했습니다.
 
 ## 지원하는 스택
 

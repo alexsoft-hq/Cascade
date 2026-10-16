@@ -11,11 +11,16 @@ import { toolList } from '../../mcp/catalog.mjs';
 import { serve } from '../../mcp/stdio.mjs';
 
 export function run(ctx) {
-  const host = ctx.servedHost('mcp');
+  const host = closeOnSignals(ctx.servedHost('mcp'));
   const served = host.list();
   process.stderr.write(`cascade mcp: serving ${served.length} project(s) [${served.map((p) => p.id).join(', ')}]: `
     + `packs load on first use, budget ${(host.budgetBytes / (1024 * 1024)).toFixed(0)} MB of pack JSON\n`);
   if (served.length > 1) process.stderr.write('more than one project: every tool call must name one (`project`), or it is answered with `ambiguous`. Call `projects` to list them\n');
-  serve({ deps: { toolList, callTool: (name, args) => host.callTool(name, args) } })
-    .then(() => process.exit(0));
+  serve({ deps: { toolList, onDisconnect: host.close, callTool: (name, args) => host.callToolAsync(name, args) } })
+    .then(() => { host.close(); process.exit(0); });
+}
+
+function closeOnSignals(host) {
+  for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { host.close(); process.exit(0); });
+  return host;
 }

@@ -10,7 +10,43 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-16
+
 ### Added
+
+- **Persistent code structure for AI coding.** Analysis publishes a separate
+  structure index from the selected Java, TypeScript and frontend facts.
+  Directed module dependencies, declaration search, file outlines, bounded task
+  context, exact parser-backed source snippets and index status are available
+  over MCP and `cascade code`. A session briefing brings together the indexed
+  structure, recorded entry points, freshness and analysis limits. Structure
+  coverage and trust remain separate from impact grades.
+
+- **Bounded structural call tracing.** `code_trace` and `cascade code trace`
+  expose recorded direct/transitive callers and callees with intermediate
+  declarations. Local functions, immutable aliases and imported functions have
+  lexical evidence; callback arguments remain references, not proven execution.
+
+- **Compact impact paths.** Optional `flow` compact responses share repeated
+  evidence and retain complete shown paths within an answer-byte budget, with
+  explicit per-lane omissions and continuation. Tool descriptions are shorter.
+
+- **A Code workspace in the viewer.** Read and copy the session briefing, explore
+  module dependencies, search files and declarations, then open a file outline
+  and verified source in one place. The workspace uses the same tools as MCP.
+
+- **Parser-backed declaration ranges.** New analysis records exact declaration
+  spans and signatures, including distinct Java overloads and constructors.
+  Legacy facts with incomplete extents remain explicit and require reanalysis.
+
+- **Automatic refresh of saved local changes.** Source-backed MCP and viewer
+  sessions detect changes and wait for analysis before answering. Repeated
+  requests share one refresh; successful input fingerprints survive restarts.
+  Existing calibration gates remain in force. Snapshot mode (`--no-watch`),
+  unavailable sources, failed refreshes and unsaved editor buffers are explicit.
+  Each fingerprint scan hashes a real file once across overlapping input roots;
+  later requests still validate saved bytes. Generated agent MCP configuration
+  preserves the selected registry through `CASCADE_HOME`, including Codex TOML.
 
 - **Source-backed NestJS prefix exclusions.** Imported literal constants,
   templates, string `substring`, array spreads and pure primitive-array `map`

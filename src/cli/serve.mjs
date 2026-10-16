@@ -11,6 +11,8 @@
 // profile a command or a server answers with.
 
 import fs from 'node:fs';
+import { createAutoRefresh } from './auto_refresh.mjs';
+import { validateStructure } from '../core/structure.mjs';
 import path from 'node:path';
 import { loadPack, PACK_SCHEMA } from '../core/pack.mjs';
 import { loadProfile, normalizeProfile, trustGapsFor, PROFILE_DEFAULTS } from '../core/profile.mjs';
@@ -222,6 +224,11 @@ export function servedEntries(args, cmdName) {
  * project differently. `packJson`/`packDir` ride along for the viewer's
  * /api/meta and /api/source; the tools never look at them.
  */
+function servedStructure(dir, pack) {
+  try { return { structure: validateStructure(JSON.parse(fs.readFileSync(path.join(dir, 'structure.json'), 'utf8')), { pack }) }; }
+  catch (error) { return { structure: null, structureError: error.message }; }
+}
+
 export function loadServedProject(entry) {
   const dir = packDirOf(entry);
   const file = path.join(dir, 'pack.json');
@@ -231,7 +238,7 @@ export function loadServedProject(entry) {
   const graph = loadPack(pack, { verifyDigest: true });
   const { prof, watchFiles } = watchedProfile(dir, pack);
   return {
-    watchFiles, graph,
+    watchFiles, graph, ...servedStructure(dir, pack),
     basis: {
       // The id the CLIENT addressed (the registry id / the `project` argument),
       // not the name the pack happens to carry: on a server holding several
@@ -301,10 +308,41 @@ export function goldenAsk(graph, pack, profile) {
  * may hold are decided once, here, so the two can never answer the same
  * question from two different servers.
  */
+export function refreshProjectIds(host, name, args = {}) {
+  if (['projects', 'index_status'].includes(name)) return [];
+  const { projectId } = host.resolveProjectArg(args);
+  const federated = ['flow', 'endpoint_impact', 'screen_impact', 'erd', 'map', 'overview'].includes(name);
+  return federated && args.federate !== false ? host.ids() : [projectId];
+}
+
 export function servedHost(args, cmdName) {
-  return createProjectHost({
-    registry: servedEntries(args, cmdName),
-    loadProject: loadServedProject,
+  const entries = servedEntries(args, cmdName);
+  const refresh = createAutoRefresh({
+    entries: entries.map((entry) => ({ ...entry, packDir: packDirOf(entry) })),
+    intervalMs: cmdName === 'code' ? 0 : undefined,
+    enabled: ['mcp', 'view', 'code'].includes(cmdName) && !args.flag?.('no-watch'),
+  });
+  const host = createProjectHost({
+    registry: entries,
+    loadProject: (entry) => {
+      const ctx = loadServedProject(entry);
+      ctx.indexStatus = () => refresh.status(entry.id);
+      Object.defineProperty(ctx.basis, 'freshness', { enumerable: true, get: () => refresh.status(entry.id) });
+      return ctx;
+    },
     budgetBytes: memoryBudgetBytes(args),
+  });
+  const ensureFresh = async (ids = host.ids()) => {
+    await refresh.ensureFresh(ids);
+  };
+  return Object.assign(host, {
+    ensureFresh,
+    ensureFor: (name, toolArgs) => ensureFresh(refreshProjectIds(host, name, toolArgs)),
+    refreshStatus: refresh.status,
+    close: refresh.close,
+    callToolAsync: async (name, toolArgs) => {
+      await ensureFresh(refreshProjectIds(host, name, toolArgs));
+      return host.callTool(name, toolArgs);
+    },
   });
 }

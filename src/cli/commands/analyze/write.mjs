@@ -20,6 +20,7 @@ import { checkCases, parseCases, inventoryOf, relationPopulations } from '../../
 import { slugify } from '../../../core/init.mjs';
 import { loadManifest } from '../../../core/manifest.mjs';
 import { projectPack } from '../../../core/pack.mjs';
+import { STRUCTURE_FILE, validateStructure } from '../../../core/structure.mjs';
 import { registryPath } from '../../../core/paths.mjs';
 import { readRegistry, upsertProject, writeRegistryAtomic } from '../../../core/registry.mjs';
 import { registrationTarget } from '../../../core/resolve.mjs';
@@ -368,7 +369,7 @@ export function writePackAndIndex({ g, pack, result, out, red, calibrated, gateS
   // whichever `--out` it writes: they share the gate verdict, the baseline, the
   // receipt and the pack history beside the pack directory.
   publishPack(writeDir, {
-    pack, index: result.index, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red, lockDir,
+    pack, index: result.index, structure: result.structure, routes: serializeRoutesIndex(routesIndex), keep: calibrated && !red, lockDir,
     afterPack: () => { writeVerdict(); afterPack?.({ writeDir, writeIndexFile }); },
   });
   return { writeDir, writeIndexFile, routesIndex };
@@ -466,7 +467,8 @@ export function analysisRecord({ flags, selectionRel, optOuts, profileDigest, en
  * history is pruned after that, even when `afterPack` failed. A failure while
  * keeping or pruning is said and does not stop the publish.
  */
-export function publishPack(writeDir, { pack, index, routes, keep, lockDir = writeDir, afterPack = null }) {
+export function publishPack(writeDir, { pack, index, structure, routes, keep, lockDir = writeDir, afterPack = null }) {
+  if (structure !== undefined) validateStructure(structure, { pack });
   // `lockDir: false` is a caller that already holds the project's lock.
   const locked = (fn) => (lockDir === false ? fn() : withPackLock(lockDir, fn));
   locked(() => {
@@ -475,6 +477,7 @@ export function publishPack(writeDir, { pack, index, routes, keep, lockDir = wri
     fs.mkdirSync(writeDir, { recursive: true });
     writeAtomic(path.join(writeDir, 'facts-index.json'), serializeIndex({ ...index, packDigest: pack.digest }));
     if (routes !== undefined) writeAtomic(path.join(writeDir, ROUTES_FILE), routes);
+    if (structure !== undefined) writeAtomic(path.join(writeDir, STRUCTURE_FILE), JSON.stringify(structure));
     writeAtomic(path.join(writeDir, 'pack.json'), JSON.stringify(pack));
     try {
       afterPack?.();

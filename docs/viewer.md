@@ -14,7 +14,7 @@ node bin/cascade.mjs view --pack .cascade/pack # one pack directly
 
 ## What you are looking at
 
-The page has a masthead, five places, and one rule that runs through all of
+The page has a masthead, six places, and one rule that runs through all of
 them: a glance is a number or a picture, a line of text is one sentence, and the
 full paragraph is one click away and never opens itself.
 
@@ -24,6 +24,7 @@ Each place is a question a reader comes with:
 |---|---|
 | **Start** | Where do I begin? Find any target and ask what breaks if it changes, how far it reaches, or what the analysis did not see. The map of the whole pack is here too. |
 | **Trace** | One target, read either way: what it uses, where it is used, and what it is. |
+| **Code** | Start a coding session: read/copy a project briefing, inspect directed module dependencies, search declarations and read verified source. |
 | **Structure** | The whole pack as drawings: Graph, Table links (by SQL joins), Coupling and Transactions. |
 | **Compare** | What changed since an earlier build of this project. It appears only when there is one. |
 | **Analysis status** | What this analysis could and could not see, what each gap touches and what to do about it, and the Rules it ran with. |
@@ -71,13 +72,10 @@ while the page scrolls.
 
 Beside them are up to four chips.
 
-- **freshness** says whether the pack still matches your working tree, and
-  appears only when the page has words for the verdict (`older than the code you
-  have now`, `edits folded in on top of this build`, `up to date`). An `unknown`
-  verdict, which is what the viewer gives a pack, since it serves a pack as it
-  was built and never compares it with the working tree, draws no chip, since a dot with no word said nothing a reader could read. It stays
-  in the evidence rail, as `not compared with your working tree`, and on Analysis
-  status.
+- **freshness** says whether the answer matches checked saved inputs. Source-backed
+  sessions check changes and refresh before project queries. Disconnected packs
+  and `--no-watch` snapshots keep an `unknown` verdict. A refresh failure is
+  reported as an error; it does not certify the previous pack as current.
 - **trust** is the computed trust level, never a typed-in one, and it appears
   only when there is something to say. A project with no approved golden set gets
   **no chip at all**: `not certified` was true of nearly every project anybody

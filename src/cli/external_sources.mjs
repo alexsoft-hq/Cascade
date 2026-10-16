@@ -47,6 +47,17 @@ function sha256File(file) {
   return hash.digest('hex');
 }
 
+/** One fingerprint scan shares hashes across overlapping roots and symlink aliases.
+ * A new cache is required for every scan; no metadata can certify unchanged bytes. */
+export function createFileHashCache() {
+  const hashes = new Map();
+  return (file) => {
+    const real = fs.realpathSync(file);
+    if (!hashes.has(real)) hashes.set(real, sha256File(real));
+    return hashes.get(real);
+  };
+}
+
 /** The input lists a run was given, with the flag that turns each lane off. */
 const INVOCATION_LANES = [['ddl', 'noDdl'], ['mappers', 'noMappers'], ['javaSrc', 'noJava'], ['webSrc', 'noWeb'], ['openapi', 'noOpenapi'], ['har', null], ['otel', null]];
 
@@ -57,9 +68,9 @@ const INVOCATION_LANES = [['ddl', 'noDdl'], ['mappers', 'noMappers'], ['javaSrc'
  * @param {object} selection   `meta.analysis.selection`, paths portable
  * @returns {Object<string,string>} absolute path -> digest, sorted by path
  */
-export function externalSourcesOf(invocation = {}, selection = {}) {
+export function externalSourcesOf(invocation = {}, selection = {}, fileHash = sha256File) {
   const keys = new Set([...inputPathsOf(invocation ?? {}, selection ?? {}).filter(isOutside), ...configKeysOf(invocation ?? {}, selection ?? {})]);
-  return Object.fromEntries([...keys].sort().map((p) => [p, digestOfSource(p)]));
+  return Object.fromEntries([...keys].sort().map((p) => [p, digestOfSource(p, fileHash)]));
 }
 
 const isOutside = (p) => typeof p === 'string' && path.isAbsolute(p);
@@ -123,20 +134,20 @@ export function changedSince(analysis) {
 }
 
 /** One recorded source's digest now: a path's content, or a package directory's configuration files. */
-function digestOfSource(key) {
+function digestOfSource(key, fileHash) {
   if (key.endsWith(SPRING_CONFIG)) {
     const resources = key.slice(0, -SPRING_CONFIG.length);
-    return filesDigest(resources, () => springConfigFilesBeside(path.join(path.dirname(resources), 'java')));
+    return filesDigest(resources, () => springConfigFilesBeside(path.join(path.dirname(resources), 'java')), fileHash);
   }
-  if (!key.endsWith(PACKAGE_CONFIG)) return contentDigestOf(key);
+  if (!key.endsWith(PACKAGE_CONFIG)) return contentDigestOf(key, fileHash);
   const dir = key.slice(0, -PACKAGE_CONFIG.length);
-  return filesDigest(dir, () => fs.readdirSync(dir).filter((n) => isWebPackageConfigFile(n) && fs.statSync(path.join(dir, n)).isFile()).sort().map((n) => path.join(dir, n)));
+  return filesDigest(dir, () => fs.readdirSync(dir).filter((n) => isWebPackageConfigFile(n) && fs.statSync(path.join(dir, n)).isFile()).sort().map((n) => path.join(dir, n)), fileHash);
 }
 
 /** A digest of a set of files, named relative to `dir`; `missing` when `dir` is gone, `unreadable` when a file cannot be read. */
-function filesDigest(dir, list) {
+function filesDigest(dir, list, fileHash) {
   try {
-    const lines = list().map((f) => `${path.relative(dir, f).split(path.sep).join('/')}\t${sha256File(f)}`);
+    const lines = list().map((f) => `${path.relative(dir, f).split(path.sep).join('/')}\t${fileHash(f)}`);
     return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
   } catch {
     return fs.existsSync(dir) ? UNREADABLE : 'missing';
@@ -152,11 +163,11 @@ function packageDirOf(root) {
 }
 
 /** A digest of a file, or of every regular file under a directory; `missing` when it is gone, `unreadable` when it cannot be read. */
-export function contentDigestOf(abs) {
+export function contentDigestOf(abs, fileHash = sha256File) {
   if (!fs.existsSync(abs)) return 'missing';
   const lines = [];
   try {
-    visit(abs, '', { lines, firstPath: new Map() });
+    visit(abs, '', { lines, firstPath: new Map(), fileHash });
   } catch {
     return UNREADABLE;
   }
@@ -167,7 +178,7 @@ const SKIPPED = new Set(['node_modules', '.git', '.cascade']);
 
 function visit(p, rel, walk) {
   const st = fs.statSync(p);
-  if (st.isFile()) walk.lines.push(`${rel}\t${sha256File(p)}`);
+  if (st.isFile()) walk.lines.push(`${rel}\t${walk.fileHash(p)}`);
   else if (st.isDirectory()) visitDirectory(p, rel, walk);
 }
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { structuralDeclarations } from '../web/lib/declarations.mjs';
 import { staticValue, staticFacts } from './tsstatic.mjs';
 // tsfacts.mjs — the TypeScript backend worker: what each .ts file says, read from that file alone.
 //
@@ -67,7 +68,7 @@ const SCHEMA = 'cascade:tsfacts:1';
 //    chain gives, and each value a `||`, `??` or `&&` may be, as `bind`s. Test
 //    files are listed like any other: which are a test's is the typescript
 //    pack's to say (ts.test-support).
-export const VERSION = 'tsfacts/10';
+export const VERSION = 'tsfacts/14';
 
 const require = createRequire(import.meta.url);
 // The same vendored parser the web worker reads TypeScript with.
@@ -876,6 +877,7 @@ export function factsOfFile(file, code) {
   const sc = readScopes(ast);
   emit({ kind: 'file', file });
   emit({ kind: 'static-context', file, staticFacts: staticFacts(ast, sc) });
+  for (const r of structuralDeclarations(ast, { code, file, startOffset: 0, scopes: sc })) emit(r);
   const names = nameClasses(ast, sc);
   declarationRecords(file, ast, emit, sc, names);
   localClassRecords(file, emit, sc, names);

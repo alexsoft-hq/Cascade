@@ -67,7 +67,7 @@ const lines = (byId) => byId.get('ovsummary').querySelectorAll('svg').filter((s)
 
 test('five places on the first row; Structure and Analysis status carry a second row of views', async (t) => {
   const { ctx, body, byId, asked } = await boot(t);
-  assert.deepEqual(places(body), ['Start', 'Trace', 'Structure', 'Analysis status'], 'Compare is absent: this project keeps no earlier build');
+  assert.deepEqual(places(body), ['Start', 'Code', 'Trace', 'Structure', 'Analysis status'], 'Compare is absent: this project keeps no earlier build');
   // Start and Analysis status draw from the one landing answer, asked once
   // however many of them come on screen while it is in flight.
   assert.equal(calls(asked, 'overview').length, 1);
@@ -157,7 +157,7 @@ test('a project with an earlier build shows Compare, and a link to it lands ther
   assert.equal(placeButton(body, 'compare').classList.contains('hidden'), true);
   ev(ctx, "activateTab('compare')");
   ev(ctx, "STATE.meta = { ...STATE.meta, projectId:'gamma', history:[{ id:'h1', commit:'a'.repeat(40), builtAt:'2026-01-01T00:00:00Z', dirty:false }] }; renderCompareChrome()");
-  assert.deepEqual(places(body), ['Start', 'Trace', 'Structure', 'Compare', 'Analysis status']);
+  assert.deepEqual(places(body), ['Start', 'Code', 'Trace', 'Structure', 'Compare', 'Analysis status']);
   assert.equal(activePlace(body), 'compare');
 });
 

@@ -256,6 +256,7 @@ const ERROR_STATUS = Object.freeze({
   'unknown-tool': 400,   // a name no catalog has is a client mistake, not a missing resource
   ambiguous: 409,
   'pack-unreadable': 503,
+  'refresh-failed': 503,
   'overlay-stale': 409,
   'ts-not-overlaid': 409, // the base-only answer is still there to ask for
   'db-connect-error': 503,
@@ -284,7 +285,12 @@ function projectOf(body, query) {
 
 /** A route's answer, or the structured error its dependency threw. */
 function answered(run, code, message) {
-  try { return { status: 200, json: run() }; }
+  try {
+    const result = run();
+    return result && typeof result.then === 'function'
+      ? Promise.resolve(result).then((json) => ({ status: 200, json }), (e) => dispatchErr(e, code, message))
+      : { status: 200, json: result };
+  }
   catch (e) { return dispatchErr(e, code, message); }
 }
 
@@ -356,7 +362,16 @@ export function handleApi(method, pathname, body, deps, query) {
   // Which project the request is about, if it says: `?project=` on a GET,
   // `body.project` (or `body.arguments.project`) on a POST. A single-project
   // server ignores it; a multi-project one refuses to guess without it (409).
-  return route.run({ method, body, deps, query, project: projectOf(body, query) });
+  const run = () => route.run({ method, body, deps, query, project: projectOf(body, query) });
+  if (deps.ensureFresh && !['/api/tools', '/api/rules/examples', '/api/projects'].includes(pathname) && !['index_status', 'projects'].includes(body?.name)) {
+    return Promise.resolve().then(() => apiFreshness(deps, pathname, body, query)).then(run, (e) => dispatchErr(e, 'refresh-failed', 'refresh failed'));
+  }
+  return run();
+}
+
+function apiFreshness(deps, pathname, body, query) {
+  const name = pathname === '/api/call' ? body?.name : pathname === '/api/meta' ? 'overview' : pathname === '/api/export' ? 'flow' : 'code_snippet';
+  return deps.ensureFresh(name, { ...(body?.arguments ?? {}), ...(projectOf(body, query) ? { project: projectOf(body, query) } : {}) });
 }
 
 /**
@@ -419,7 +434,7 @@ export function serveHttp({ http, port = 4319, host = '127.0.0.1', deps, html, m
           let parsed = null;
           if (body) { try { parsed = JSON.parse(body); } catch { return send(res, 400, { 'content-type': 'application/json' }, JSON.stringify({ error: { code: 'bad-request', message: 'invalid JSON body' } })); } }
           const out = handleApi(req.method, pathname, parsed, deps, url.searchParams);
-          send(res, out.status, { 'content-type': 'application/json' }, JSON.stringify(out.json));
+          sendApiResponse(res, out);
         });
         return;
       }
@@ -454,6 +469,12 @@ export function serveHttp({ http, port = 4319, host = '127.0.0.1', deps, html, m
 function boundPort(server, port) {
   const bound = typeof server.address === 'function' ? server.address() : null;
   return bound && typeof bound.port === 'number' ? bound.port : port;
+}
+
+function sendApiResponse(res, out) {
+  const respond = (result) => send(res, result.status, { 'content-type': 'application/json' }, JSON.stringify(result.json));
+  if (out && typeof out.then === 'function') out.then(respond, (e) => respond(dispatchErr(e, 'error', 'request failed')));
+  else respond(out);
 }
 
 function collectBody(req, cb) {

@@ -2,11 +2,12 @@
 
 # <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/cascade-mark-dark.svg"><img src="docs/assets/cascade-mark.svg" width="28" alt=""></picture> Cascade
 
-A code-to-column change-impact knowledge graph for AI coding agents, and for the
-people who work beside them. Apache-2.0.
+Persistent code structure and code-to-column change impact for AI coding agents,
+with automatic refresh of saved local changes. Apache-2.0.
 
 - [A picture first](#a-picture-first)
 - [What it answers](#what-it-answers)
+- [Code context for AI coding](#code-context-for-ai-coding)
 - [Supported stacks](#supported-stacks)
 - [Install](#install)
 - [Ten minutes on your own project](#ten-minutes-on-your-own-project)
@@ -70,8 +71,8 @@ agent can act on, and that is the whole point.
 
 ## What it answers
 
-Six questions, and the tool that answers each. `tools/list` is the full
-surface; these are the six worth learning first.
+The impact questions below complement the code-structure tools in the next
+section. `tools/list` is the full surface.
 
 | Question | Tool |
 |---|---|
@@ -81,6 +82,48 @@ surface; these are the six worth learning first.
 | I am about to change this endpoint or open this screen. What does it run through, down to the tables? | `flow` |
 | I have edited these files but not committed. What is the blast radius right now? | `changed_impact` |
 | Which two API groups share data through the database without calling each other? | `coupling` |
+
+## Code context for AI coding
+
+Start each session with `session_briefing`: a short account of the indexed
+structure, recorded entry points, freshness and analysis limits. `architecture`
+shows directed dependencies between directory groups with their evidence. Use
+`code_search` and `file_outline` to locate files, types and functions, then
+`code_snippet` to read the exact declaration span after checking the source hash.
+`code_context` collects relevant declarations and relationships within a budget.
+`code_trace` follows recorded callers and callees without hiding intermediate
+functions. Local calls, immutable aliases and imported functions are distinct
+from callback references, which do not prove invocation. For impact paths,
+`flow` supports a compact, byte-bounded response with shared evidence.
+
+The viewer's **Code** workspace brings briefing copy, module dependencies,
+declaration search, file outlines and verified source into one place.
+```sh
+cascade init --root /path/to/project
+cascade analyze --root /path/to/project
+cascade code briefing --root /path/to/project
+cascade code architecture --root /path/to/project
+cascade code context --root /path/to/project --query OrderService --max-bytes 16384
+cascade mcp --root /path/to/project
+cascade view --root /path/to/project
+```
+
+Source-backed MCP and viewer sessions check saved changes and refresh the
+analysis automatically. Queries wait for the required refresh; a failed build
+does not silently become a current answer. `--no-watch` serves the existing
+snapshot. Unsaved editor buffers are not inputs, and disconnected packs retain
+unknown freshness. Existing calibration gates still apply; automatic refresh
+never accepts a new baseline on your behalf.
+
+Structure comes from the selected Java, TypeScript and frontend analysis facts,
+not an all-language index. Missing relationships remain unknown; directory
+groups are structural summaries, not inferred business intent. Structure has
+its own digest and coverage and does not change the impact graph's edge grades.
+Context budgets count UTF-8 bytes, not model tokens. See
+[code intelligence and freshness](docs/code-intelligence.md) for the contract
+and the [0.9 walkthrough](docs/code-intelligence-demo.md) to try each feature.
+The [supported-language evaluation](docs/code-intelligence-evaluation.md)
+records checks on Java/JavaScript examples, Ghostfolio and Cascade itself.
 
 ## Supported stacks
 

@@ -102,7 +102,7 @@ export function packFingerprint(entry, io = fs) {
   const pack = stampOf(io, path.join(dir, 'pack.json'));
   if (pack === null) return null;
   const dot = typeof entry.dotCascadePath === 'string' && entry.dotCascadePath ? path.resolve(entry.dotCascadePath) : null;
-  const beside = [path.join(dir, 'facts-index.json'), path.join(dir, 'routes.json')];
+  const beside = ['facts-index.json', 'routes.json', 'structure.json'].map((name) => path.join(dir, name));
   if (dot) beside.push(path.join(dot, 'calibration', 'gate-state.json'), path.join(dot, 'golden', 'cases.jsonl'), path.join(dot, 'profile.json'), path.join(dot, 'manifest.json'));
   return [pack, ...beside.map((f) => stampOf(io, f) ?? '-')].join('|');
 }

@@ -15,11 +15,11 @@
 /** The commands the dispatch table answers to, in the order the usage lists them. */
 export const COMMANDS = Object.freeze([
   'setup', 'doctor', 'init', 'agent', 'analyze', 'otel-methods', 'estimate',
-  'verify', 'golden', 'catalog', 'pack', 'mcp', 'impact', 'view', 'export', 'diff', 'rules',
+  'verify', 'golden', 'catalog', 'pack', 'mcp', 'impact', 'view', 'export', 'diff', 'rules', 'code',
 ]);
 
 /** The first line: what a reader sees before any detail. */
-export const USAGE_HEADER = 'usage: cascade <setup|doctor|init|agent|analyze|otel-methods|estimate|verify|golden|catalog|pack|mcp|impact|view|export|diff|rules> …\n';
+export const USAGE_HEADER = 'usage: cascade <setup|doctor|init|agent|analyze|otel-methods|estimate|verify|golden|catalog|pack|mcp|impact|view|export|diff|rules|code> …\n';
 
 /**
  * The last word, after every command: where a pack is looked for. It belongs to
@@ -29,6 +29,14 @@ export const USAGE_FOOTER = '\nA pack is located by: --pack > --project (~/.casc
 
 /** One entry per command: exactly the lines that command owns in the whole text. */
 export const USAGE = Object.freeze({
+  code:
+    '  cascade code <briefing|architecture|search|outline|trace|context|snippet|status> [--root <dir> | --project <id> | --pack <dir>]\n'
+    + '               [--query <text>] [--file <path>] [--symbol <id>] [--kind all|file|declaration]\n'
+    + '               [--direction inbound|outbound|both]\n'
+    + '               [--limit N] [--offset N] [--depth N] [--max-bytes N] [--max-lines N]\n'
+    + '               [--from-line N] [--to-line N] [--no-watch]\n'
+    + '      (query persistent code structure as JSON. Saved changes are refreshed before queries;\n'
+    + '       --no-watch reads the existing snapshot. Context budgets count UTF-8 bytes, not tokens.)\n',
   setup:
     '  cascade setup [--force] [--home]\n'
     + '      (build the SQL lane\'s python and install its pinned requirements. --force rebuilds an\n'
@@ -125,7 +133,7 @@ export const USAGE = Object.freeze({
   pack:
     '  cascade pack --catalog <f> --lineage <f> --out <dir>\n',
   mcp:
-    '  cascade mcp [--pack <dir> | --project <id> ... | --root <dir>] [--memory-budget <MB>]\n'
+    '  cascade mcp [--pack <dir> | --project <id> ... | --root <dir>] [--memory-budget <MB>] [--no-watch]\n'
     + '      (with no --pack/--root/--project it serves EVERY registered project, lazily: a pack is\n'
     + '       parsed on the first call that needs it, and the loaded ones are held in an LRU under\n'
     + '       the memory budget: 512 MB of pack JSON by default. Each tool takes a `project`\n'
@@ -136,7 +144,7 @@ export const USAGE = Object.freeze({
     + '      (default: the dirty files are re-parsed and the answer describes the working tree;\n'
     + '       --mode base-only answers from the pack alone: the PRE-EDIT structure, labelled as such)\n',
   view:
-    '  cascade view [--pack <dir> | --project <id> ... | --root <dir>] [--port 4319] [--memory-budget <MB>]\n'
+    '  cascade view [--pack <dir> | --project <id> ... | --root <dir>] [--port 4319] [--memory-budget <MB>] [--no-watch]\n'
     + '      (same project selection as `mcp`; the page shows one project at a time. Open it with\n'
     + '       ?project=<id> when the server serves several)\n',
   export:

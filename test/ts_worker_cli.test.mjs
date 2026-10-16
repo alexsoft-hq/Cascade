@@ -13,7 +13,7 @@ test('TypeScript worker lists and reads files from an installation path with URL
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const install = path.join(root, 'installed package #100%');
   const adapters = fileURLToPath(new URL('../adapters/', import.meta.url));
-  for (const rel of ['ts', 'web/lib/ast.mjs', 'web/vendor/babel-parser.cjs']) {
+  for (const rel of ['ts', 'web/lib/ast.mjs', 'web/lib/declarations.mjs', 'web/lib/structural_refs.mjs', 'web/vendor/babel-parser.cjs']) {
     const dest = path.join(install, 'adapters', rel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.cpSync(path.join(adapters, rel), dest, { recursive: true });

@@ -98,6 +98,43 @@ export function readTsconfigPaths(rootAbs, appRootAbs) {
   return { file: first ? toPosix(path.relative(rootAbs, first)) : null, baseUrl: base ? toPosix(path.relative(rootAbs, base)) || '.' : null, paths };
 }
 
+/** The same supplementary files the lane reads, for freshness checks. Inventory
+ * is recalculated so a newly created nearer config/schema/package is detected. */
+export function tsSupplementaryFiles(rootAbs, appRootAbs, declaredSchema = null, sourceFiles = []) {
+  const configs = tsconfigChain(tsconfigFileOf(rootAbs, appRootAbs)).map((c) => c.file);
+  // The recorded schema may have been discovered rather than explicitly set.
+  // Keep it (including deletion) and discover any newly nearer schema as well.
+  const schemas = [declaredSchema, prismaSchemaFileOf(rootAbs, appRootAbs, null)].filter(Boolean);
+  const packages = [appRootAbs, ...sourceFiles.map((file) => path.dirname(file))]
+    .map((dir) => packageFileOf(rootAbs, dir)).filter(Boolean);
+  return [...new Set([...configs, ...schemas, ...packages])].sort();
+}
+
+/** Potential newly reachable imports, including Git-ignored files. Uses the
+ * resolver's exact path rule; no parsing. Unlike a raw root walk, never follows
+ * symlinks outside the analyzed root or loops through the same directory. */
+export function tsCandidateFiles(rootAbs) {
+  const realRoot = fs.realpathSync(rootAbs), seen = new Set(), files = [], inside = fileInsideRoot(rootAbs);
+  const walk = (dir) => {
+    const real = fs.realpathSync(dir);
+    if (!(real === realRoot || real.startsWith(realRoot + path.sep)) || seen.has(real)) return;
+    seen.add(real);
+    for (const name of fs.readdirSync(dir).sort()) {
+      const file = path.join(dir, name), rel = toPosix(path.relative(rootAbs, file));
+      const stat = candidateStat(file);
+      if (!stat) continue;
+      if (stat.isDirectory() && isReadablePath(`${rel}/__candidate__.ts`)) walk(file);
+      else if (stat.isFile() && isReadablePath(rel) && inside(rel)) files.push(file);
+    }
+    seen.delete(real);
+  };
+  walk(rootAbs); return files.sort();
+}
+
+function candidateStat(file) {
+  try { return fs.statSync(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+
 /** The schema.prisma that belongs to the app: the profile's, else `prisma/schema.prisma` at or above the app root. */
 export function prismaSchemaFileOf(rootAbs, appRootAbs, declared) {
   if (declared) return fs.existsSync(declared) ? declared : null;

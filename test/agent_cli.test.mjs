@@ -187,7 +187,7 @@ test('--client cursor writes the Cursor config and an always-applied rule file',
 
   const mdc = read(fx.root, '.cursor', 'rules', 'cascade.mdc');
   assert.match(mdc, /^alwaysApply: true$/m);
-  assert.match(mdc, /^description: Ask the Cascade impact graph before changing data-facing code$/m);
+  assert.match(mdc, /^description: Read Cascade code structure and change impact before editing$/m);
   assert.ok(mdc.includes('`changed_impact`'), 'the rule file carries the same body');
   assert.equal(mdc.includes('<!-- cascade:begin -->'), false, 'the whole file is ours, so it carries no markers');
 
@@ -223,4 +223,40 @@ test('a root with no registered project exits 2 and names the command that regis
   assert.match(r.stderr, /cascade analyze/);
   assert.equal(fs.existsSync(path.join(stranger, '.mcp.json')), false);
   assert.equal(fs.existsSync(path.join(stranger, 'CLAUDE.md')), false);
+});
+
+test('generated custom-registry JSON and Codex config launch MCP from an unrelated client environment', (t) => {
+  const fx = fixture(t);
+  const generated = agent(fx, ['--client', 'all', '--write']);
+  assert.equal(generated.code, 0, generated.stderr);
+  const entry = JSON.parse(read(fx.root, '.mcp.json')).mcpServers.cascade;
+  assert.deepEqual(entry.env, { CASCADE_HOME: fx.home });
+  assert.deepEqual(JSON.parse(read(fx.root, '.cursor/mcp.json')).mcpServers.cascade.env, entry.env);
+  const tomlEnv = generated.stdout.match(/^env = \{ "CASCADE_HOME" = (".*") \}$/m);
+  assert.ok(tomlEnv, 'printed Codex config must carry registry override');
+  assert.equal(JSON.parse(tomlEnv[1]), fx.home);
+  const clientEnv = { ...process.env, HOME: path.join(fx.base, 'other-home'), USERPROFILE: path.join(fx.base, 'other-home') };
+  delete clientEnv.CASCADE_HOME;
+  const input = [
+    { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'config-test', version: '1' } } },
+    { jsonrpc: '2.0', method: 'notifications/initialized' },
+    { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'projects', arguments: {} } },
+  ].map(JSON.stringify).join('\n') + '\n';
+  const launched = spawnSync(entry.command, entry.args, { cwd: fx.base, env: { ...clientEnv, ...entry.env }, input, encoding: 'utf8', timeout: 20000 });
+  assert.equal(launched.status, 0, launched.stderr);
+  const responses = launched.stdout.trim().split('\n').map(JSON.parse);
+  const response = responses.find((r) => r.id === 2);
+  assert.ok(response.result && !response.result.isError, JSON.stringify(response));
+  assert.match(response.result.content[0].text, /"id":"shop"/);
+  const rules = read(fx.root, 'AGENTS.md');
+  assert.match(rules, /`code_trace`/); assert.match(rules, /`compact: true`/);
+  assert.ok(rules.split('\n').length < 40);
+});
+
+test('relative custom registry is resolved before writing configs and no unrelated environment is copied', (t) => {
+  const fx = fixture(t); fx.env.CASCADE_HOME = '../home'; fx.env.CASCADE_SECRET_TEST = 'must-not-copy';
+  const result = agent(fx, ['--write']); assert.equal(result.code, 0, result.stderr);
+  const entry = JSON.parse(read(fx.root, '.mcp.json')).mcpServers.cascade;
+  assert.deepEqual(entry.env, { CASCADE_HOME: fx.home });
+  assert.equal(JSON.stringify(entry).includes('must-not-copy'), false);
 });

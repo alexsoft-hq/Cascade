@@ -147,24 +147,33 @@ function checkTruncated(truncated, answer) {
       if (!(k in d)) fail(`truncated.fields entry missing ${k}`);
     }
     if (d.shown > d.total) fail(`truncated: shown(${d.shown}) > total(${d.total}) for ${d.field}`);
-    // "More available" is signalled by nextOffset, NOT by shown<total. Under
-    // paging (offset>0) a legitimate last/interior page has shown<total yet
-    // nothing further to fetch (nextOffset null). The producer owns the offset
-    // arithmetic and is tested at its own layer; here we enforce only the
-    // self-consistency the response alone can prove.
-    if (d.nextOffset != null) {
-      anyMore = true;
-      if (!Number.isInteger(d.nextOffset) || d.nextOffset <= 0 || d.nextOffset > d.total) {
-        fail(`truncated field ${d.field} nextOffset(${d.nextOffset}) out of range 1..${d.total}`);
-      }
-    }
+    anyMore = checkContinuation(d) || anyMore;
     // Cross-check the declared shown against the actual list length in answer.
     const actual = answer && Array.isArray(answer[d.field]) ? answer[d.field].length : undefined;
     if (actual !== undefined && actual !== d.shown) {
       fail(`truncated.shown(${d.shown}) != actual list length(${actual}) for ${d.field}`);
     }
   }
-  if (truncated.any !== anyMore) fail(`truncated.any(${truncated.any}) disagrees with nextOffset presence(${anyMore})`);
+  if (truncated.any !== anyMore) fail(`truncated.any(${truncated.any}) disagrees with continuation or byte-cut presence(${anyMore})`);
+}
+
+/** A page may be cut before its first row fits; that needs retry, not a skipped offset. */
+function checkContinuation(d) {
+  if (d.nextOffset != null && (!Number.isInteger(d.nextOffset) || d.nextOffset <= 0 || d.nextOffset > d.total)) {
+    fail(`truncated field ${d.field} nextOffset(${d.nextOffset}) out of range 1..${d.total}`);
+  }
+  if (d.byteLimited !== undefined && typeof d.byteLimited !== 'boolean') fail('truncated.byteLimited must be boolean');
+  if (d.byteLimited !== true) {
+    if (d.retry !== undefined) fail('truncated.retry requires byteLimited=true');
+    return d.nextOffset != null;
+  }
+  if (!Number.isInteger(d.shown) || d.shown < 0 || !Number.isInteger(d.total) || d.total <= d.shown) fail('byte-limited field must omit at least one row');
+  const retry = d.retry;
+  if (!retry || retry.action !== 'increase-maxBytes' || !Number.isInteger(retry.offset) || retry.offset < d.shown || retry.offset >= d.total) {
+    fail('byte-limited field requires retry {action:increase-maxBytes, offset} within the remaining rows');
+  }
+  if (d.nextOffset != null && retry.offset !== d.nextOffset) fail('byte-limited retry offset must match nextOffset');
+  return true;
 }
 
 function checkEmpty(answer) {

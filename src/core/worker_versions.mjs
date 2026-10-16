@@ -13,13 +13,13 @@
 // tells you to bump this one.
 
 /** JavaFacts.java — `static final String VERSION`. */
-export const JAVA_WORKER_VERSION = 'javafacts/24';
+export const JAVA_WORKER_VERSION = 'javafacts/25';
 /**
  * adapters/ts/tsfacts.mjs — `VERSION`. NOT part of `workerVersions()`: it is in
  * every TypeScript shard's key, so a new worker makes each shard miss and be
  * read again, and a project with no TypeScript backend is not sent cold by it.
  */
-export const TS_WORKER_VERSION = 'tsfacts/10';
+export const TS_WORKER_VERSION = 'tsfacts/14';
 /** mybatis_extract.py — `EXTRACTOR_VERSION`. */
 export const MYBATIS_WORKER_VERSION = 'mybatis-extract/2';
 /** lineage.py — `LINEAGE_VERSION`. */
@@ -41,7 +41,7 @@ export const CATALOG_WORKER_VERSION = 'catalog-ddl/14';
  */
 export const CATALOG_LIVE_WORKER_VERSION = 'catalog-live/1';
 /** adapters/web/webfacts.mjs — `const VERSION`. */
-export const WEB_WORKER_VERSION = 'webfacts/22';
+export const WEB_WORKER_VERSION = 'webfacts/26';
 
 /**
  * The versions as the facts index records them. One object, so a new worker can

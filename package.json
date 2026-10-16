@@ -1,8 +1,8 @@
 {
   "name": "@alexsoft-hq/cascade",
-  "version": "0.8.11",
+  "version": "0.9.0",
   "type": "module",
-  "description": "Code-to-column change-impact knowledge graph for AI coding agents: the round trip from a screen to a database column and back, over MCP.",
+  "description": "Persistent code structure and code-to-column change impact for AI coding agents, with automatic source refresh over MCP.",
   "license": "Apache-2.0",
   "homepage": "https://alexsoft-hq.github.io/Cascade/",
   "repository": {

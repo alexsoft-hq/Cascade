@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { structuralDeclarations } from './lib/declarations.mjs';
 // webfacts.mjs - the web lane's fact worker.
 //
 // Same position in the engine as adapters/java/JavaFacts.java: the CLI spawns
@@ -221,7 +222,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const SCHEMA = 'cascade:webfacts:1';
-const VERSION = 'webfacts/22';
+const VERSION = 'webfacts/26';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -426,6 +427,7 @@ function analyzeFile(ctx) {
       continue;
     }
     recoveredErrors += (ast.errors || []).length;
+    for (const r of structuralDeclarations(ast, { ...block, file: relFile })) emit(r, r.line);
     try {
       analyzeProgram(ast.program, {
         ...ctx, block, top, emit, funcEntries, usedFunctionNames, packs, formEvents,
@@ -752,7 +754,7 @@ function vueBlocks(text) {
     const declared = langMatch ? langMatch[1].toLowerCase() : 'js';
     const lang = declared === 'ts' ? 'ts' : declared === 'tsx' ? 'tsx' : declared === 'jsx' ? 'jsx' : 'js';
     blocks.push({
-      code, lang, setup: /\bsetup\b/.test(attrs), lineOffset,
+      code, lang, setup: /\bsetup\b/.test(attrs), lineOffset, startOffset: openEnd, columnOffset: before.length - before.lastIndexOf('\n') - 1,
       line: lineOffset + 1,
     });
     SCRIPT_OPEN.lastIndex = close;
@@ -1618,7 +1620,7 @@ function scriptBlocksOf({ text, lang, tmpl }) {
   if (lang === 'websquare') return websquareScriptBlocks(text);
   if (tmpl !== null) return templateScriptBlocks(text, tmpl.engine);
   if (lang === 'vue') return vueBlocks(text);
-  return [{ code: text, lang, setup: false, lineOffset: 0, line: 1 }];
+  return [{ code: text, lang, setup: false, lineOffset: 0, line: 1, startOffset: 0 }];
 }
 
 /**

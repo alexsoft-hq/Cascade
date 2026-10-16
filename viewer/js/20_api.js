@@ -183,7 +183,7 @@ function resetProjectState(){
   OV.resp=null; OV.loading=false;
   // Start and Analysis status are drawn from that answer, and Start's own
   // question (its target, its map) was about the pack being left.
-  startReset(); statusReset();
+  startReset(); statusReset(); codeReset();
   renderCascadeRail();
   renderMastChrome();
   view.replaceChildren();

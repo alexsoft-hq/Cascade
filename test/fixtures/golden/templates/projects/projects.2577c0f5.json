@@ -65,7 +65,13 @@
               }
             },
             "freshness": {
-              "verdict": "unknown"
+              "verdict": "unknown",
+              "reason": "automatic refresh disabled (--no-watch)",
+              "inputDigest": null,
+              "checkedAt": null,
+              "refreshedAt": null,
+              "refreshing": false,
+              "automatic": false
             }
           }
         }

@@ -67,7 +67,19 @@ function resolve(scope, name) {
   return null;
 }
 
-/** A function: its own name (an expression's, in a scope of its own), its parameters, and its body, all in one function scope. */
+/** Parameter expressions run before and outside the function body's bindings.
+ * Bare destructuring/rest parameters have no expressions and keep shared var bindings. */
+function parameterHasExpression(node) {
+  if (!node) return false;
+  if (node.type === 'AssignmentPattern') return true;
+  if (node.type === 'ObjectPattern') return node.properties.some((p) => p.computed || parameterHasExpression(p.type === 'RestElement' ? p.argument : p.value));
+  if (node.type === 'ArrayPattern') return node.elements.some(parameterHasExpression);
+  if (node.type === 'RestElement') return parameterHasExpression(node.argument);
+  if (node.type === 'TSParameterProperty') return parameterHasExpression(node.parameter);
+  return false;
+}
+
+/** Function expression names, parameter evaluation, then body declarations. */
 function walkFunction(st, node, scope) {
   let outer = scope;
   if (node.type === 'FunctionDeclaration') declare(st, scope, node.id, true, 'function');
@@ -77,9 +89,10 @@ function walkFunction(st, node, scope) {
   const fn = scopeIn(outer, 'function');
   for (const p of node.params) for (const id of patternIds(p)) declare(st, fn, id, true, 'param');
   for (const p of node.params) walk(st, p, fn);
+  const bodyScope = node.params.some(parameterHasExpression) ? scopeIn(fn, 'function') : fn;
   const body = node.body;
-  if (body && body.type === 'BlockStatement') for (const s of body.body) walk(st, s, fn);
-  else if (body) walk(st, body, fn);
+  if (body && body.type === 'BlockStatement') for (const s of body.body) walk(st, s, bodyScope);
+  else if (body) walk(st, body, bodyScope);
 }
 
 /** A declaration statement's names, in the scope its kind puts them in; the rest of it is walked where it stands. */
@@ -104,7 +117,7 @@ function noteWrites(st, node, scope) {
 
 /** The scope a node opens for its children, or the scope it stands in when it opens none. */
 function scopeOpened(node, scope) {
-  if (node.type === 'BlockStatement' || node.type === 'StaticBlock' || node.type === 'SwitchStatement'
+  if (node.type === 'BlockStatement' || node.type === 'StaticBlock'
     || node.type === 'ForStatement' || node.type === 'ForInStatement' || node.type === 'ForOfStatement'
     || node.type === 'CatchClause' || node.type === 'ClassBody' || node.type === 'ClassExpression') return scopeIn(scope, 'block');
   if (node.type === 'TSModuleBlock') return scopeIn(scope, 'function');
@@ -115,6 +128,12 @@ function walk(st, node, scope) {
   if (!node || typeof node.type !== 'string') return;
   if (node.type === 'Identifier') { if (!st.declared.has(node)) st.scopes.set(node, scope); return; }
   if (isFunctionNode(node)) { walkFunction(st, node, scope); return; }
+  if (node.type === 'SwitchStatement') {
+    walk(st, node.discriminant, scope);
+    const cases = scopeIn(scope, 'block');
+    for (const arm of node.cases) walk(st, arm, cases);
+    return;
+  }
   if ((node.type === 'ForInStatement' || node.type === 'ForOfStatement') && node.left.type === 'VariableDeclaration') st.loopHeads.add(node.left);
   walkDeclaration(st, node, scope);
   noteWrites(st, node, scope);
@@ -154,5 +173,7 @@ export function readScopes(ast) {
     const b = st.declared.get(id) ?? (st.scopes.has(id) ? resolve(st.scopes.get(id), id.name) : null);
     return b ? { local: b.local, reassigned: b.reassigned, kind: b.kind } : null;
   };
-  return { local, binding };
+  // Stable identity for structural references; existing impact-facing accessors stay unchanged.
+  const identity = (id) => st.declared.get(id) ?? (st.scopes.has(id) ? resolve(st.scopes.get(id), id.name) : null);
+  return { local, binding, identity };
 }

@@ -29,6 +29,7 @@ import {
 } from '../core/walks.mjs';
 import { resolveSchemaName } from '../core/name_resolve.mjs';
 import { makeResponse } from './contract.mjs';
+import { compactFlowResponse } from './flow_compact.mjs';
 import { makeFederator, packOutboundCalls, routeRef, serversOf } from './federation.mjs';
 import { NO_STATE_TRUST_LEVEL } from '../core/trust.mjs';
 
@@ -2111,6 +2112,20 @@ function flowLanes(answer, { w, up, direction, federated, limit, offset = 0, cod
 }
 
 export function flow(graph, args, ctx) {
+  if (args?.compact !== undefined && typeof args.compact !== 'boolean') throw new ToolError('bad-input', 'compact must be boolean');
+  if (args?.maxBytes !== undefined && !args.compact) throw new ToolError('bad-input', 'maxBytes requires compact=true');
+  const maxBytes = args?.maxBytes ?? 32768;
+  if (args?.compact && (!Number.isInteger(maxBytes) || maxBytes < 4096 || maxBytes > 262144)) {
+    throw new ToolError('bad-input', 'maxBytes must be an integer from 4096 to 262144');
+  }
+  const response = fullFlow(graph, args, ctx);
+  if (!args?.compact) return response;
+  const compact = compactFlowResponse(response, { maxBytes, offset: clamp(args.offset, 0, Number.MAX_SAFE_INTEGER, 0) });
+  if (!compact) throw new ToolError('budget-too-small', 'flow metadata exceeds maxBytes; increase maxBytes');
+  return compact;
+}
+
+function fullFlow(graph, args, ctx) {
   args = args || {}; // called with no arguments at all: that is list mode, not a crash
   const direction = args.direction == null || args.direction === '' ? 'down' : String(args.direction);
   if (direction !== 'down' && direction !== 'up') throw new ToolError('bad-input', 'direction must be down | up');

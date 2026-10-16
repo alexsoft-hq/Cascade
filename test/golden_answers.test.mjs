@@ -111,7 +111,12 @@ async function record(t, name, build, analyzeFlags, out) {
       if (/^(SQL|Java|JPA|Web|Screen) lane: |^axes: |^wrote /.test(line)) process.stderr.write(`  [${name}] ${line}\n`);
     }
   }
+  // Snapshot recording must not trigger analysis or mutate the inputs it records.
+  const immutable = ['pack.json', 'facts-index.json', 'structure.json', 'routes.json', 'refresh-state.json'];
+  const readOptional = (file) => fs.existsSync(path.join(pack, file)) ? fs.readFileSync(path.join(pack, file)) : null;
+  const before = immutable.map(readOptional);
   await snapshot({ out, packs: [{ dir: pack, name }], cap: 200, scrub: scrubberFor(base) });
+  assert.deepEqual(immutable.map(readOptional), before, `${name}: recording changed its pack or sidecars`);
 }
 
 // ---------------------------------------------------------------------------

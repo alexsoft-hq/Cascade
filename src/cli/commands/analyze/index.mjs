@@ -32,6 +32,8 @@ import { prefixNotOnCallsNotes, unusedPrefixNotes } from './prefix_notes.mjs';
 import { buildPack, lockDirFor, rejectRun, runGate, stateFiles, updateRegistry, writeArtifacts } from './write.mjs';
 import { analyzeTarget, incrementalPlan, jpaImplicitNamingConfigured, jpaNamingConfigured, laneSelection, noteDirtyReached } from './inputs.mjs';
 import { overlayInputsRecord } from '../../overlay_inputs.mjs';
+import { buildStructure, matchingSourceHashes, structureMetadata } from '../../../core/structure.mjs';
+import { sha256File } from '../../state.mjs';
 
 /**
  * The profile's "jpa.namingStrategy is not declared" finding, replaced by what the
@@ -260,7 +262,7 @@ function graphOf(ctx, prepared, { result, catalog, lineage, lanes, runJava, runJ
   for (const d of diagnostics) process.stderr.write(`  [${d.severity}] ${d.kind} ${d.key}: ${d.reason}\n`);
 
   return {
-    g, result, catalog, lineage, lanes, axes, laneStats, webStats, openapiStats, harStats, runtimeStats, catalogRead,
+    g, result, catalog, lineage, lanes, axes, laneStats, webStats, openapiStats, harStats, runtimeStats, catalogRead, webFacts,
   };
 }
 
@@ -317,6 +319,10 @@ function certify(ctx, prepared, facts) {
     projectId, lanes, base, ddl, ddls, snapshot, snapshotProvenance, snapshotSha256, sqlArgs, axes,
     laneStats, webStats, openapiStats, harStats, runtimeStats, catalogStats: catalogRead, diagnostics, profileFile, st, baseCommit,
   });
+  const sourceHashes = matchingSourceHashes(result.index, (file) => sha256File(prepared.absOf(file)));
+  result.structure = buildStructure({ javaFacts: result.javaFacts, tsFacts: result.tsFacts, webFacts: facts.webFacts, graph: g, factsIndex: result.index,
+    sourceHashes, project: projectId, packDigest: pack.digest });
+  pack.meta.structure = structureMetadata(result.structure);
   // ONE LOCK FROM THE GATE TO THE RECEIPT. The gate judges this run against the
   // sealed baseline, and the baseline is what another run of the project re-seals:
   // two runs that both read the old baseline would both be judged against it, and

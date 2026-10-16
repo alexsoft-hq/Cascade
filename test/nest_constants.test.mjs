@@ -49,7 +49,7 @@ test('missing reference census does not prove an exported array immutable',()=>{
  const r=nestRoutes(readProject(records),rule);assert.ok(r.diagnostics.some(d=>d.kind==='TS_PREFIX_EXCLUDE_UNREAD'));
 });
 test('fact version invalidates stale shards and preserves new structure',()=>{
- assert.equal(VERSION,'tsfacts/10');assert.equal(TS_WORKER_VERSION,VERSION);
+ assert.equal(VERSION,'tsfacts/14');assert.equal(TS_WORKER_VERSION,VERSION);
  const calls=factsOfFile('x.ts',"app.setGlobalPrefix('api',{exclude:[...A.map(x=>{return `/${x}`;})]})");
  assert.equal(calls.find(r=>r.kind==='call').staticArgs[1].props.exclude.items[0].k,'spread');
 });

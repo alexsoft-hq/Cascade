@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
+import { readFileSync } from 'node:fs';
 import { handleRpc, serve } from '../src/mcp/stdio.mjs';
 import { PROTOCOL_VERSIONS } from '../src/mcp/protocol_versions.mjs';
 
@@ -68,6 +69,7 @@ test('initialize: uses the default serverInfo when deps does not provide one', (
   const req = { jsonrpc: '2.0', id: 5, method: 'initialize', params: {} };
   const resp = handleRpc(req, deps);
   assert.equal(resp.result.serverInfo.name, 'cascade');
+  assert.equal(resp.result.serverInfo.version, JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version);
 });
 
 // ---------------------------------------------------------------------------
