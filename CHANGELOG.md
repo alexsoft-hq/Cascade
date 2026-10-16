@@ -54,6 +54,8 @@ Each dated section below is one round of work. The round protocol is in
   including when nested beneath selected source roots. TypeScript input roots
   use canonical paths so Windows short names and
   directory aliases do not turn internal files into external ones.
+  Refresh also canonicalizes its output path so aliases preserve the project's
+  calibration gate instead of being mistaken for an unrelated one-off build.
 
 - **Source-backed NestJS prefix exclusions.** Imported literal constants,
   templates, string `substring`, array spreads and pure primitive-array `map`

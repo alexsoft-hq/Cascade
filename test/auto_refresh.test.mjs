@@ -621,7 +621,35 @@ test('real analysis with output nested under a selected root has stable input id
   let runs = 0;
   const c = createAutoRefresh({ entries: [entry], intervalMs: 0, run: (e, p, options) => { runs++; return runRefresh(e, p, { ...options, env }); } }); t.after(c.close);
   await c.ensureFresh(); assert.equal(runs, 1); assert.equal(c.status('sample').verdict, 'current');
+  assert.equal(fs.existsSync(path.join(entry.dotCascadePath, 'calibration/baseline.json')), false, 'a genuinely outside output remains a one-off pack');
   await c.ensureFresh(); assert.equal(runs, 1);
   fs.writeFileSync(path.join(src, 'main.ts'), 'export class Main { a() {} b() {} added() {} }');
   await c.ensureFresh(); assert.equal(runs, 2); assert.equal(c.status('sample').verdict, 'current');
+});
+
+test('an aliased registry pack path preserves calibration on refresh and rejects a large loss', async (t) => {
+  const f = fixture(t), outer = fixture(t);
+  const root = fs.realpathSync.native(f.root), packDir = path.join(root, '.cascade/pack');
+  const env = { ...process.env, CASCADE_HOME: path.join(outer.root, 'home') };
+  fs.mkdirSync(path.join(root, 'src')); fs.writeFileSync(path.join(root, '.gitignore'), '.cascade/');
+  const source = path.join(root, 'src/main.ts');
+  fs.writeFileSync(source, 'export class Main { a() {} b() {} c() {} d() {} }'); commitFixture(root);
+  const alias = path.join(outer.root, 'project-alias');
+  try { fs.symlinkSync(root, alias, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { if (['EPERM', 'EACCES'].includes(error.code)) { t.skip('symlink creation not permitted'); return; } throw error; }
+  const { CLI_PATH } = await import('../src/cli/env.mjs');
+  execFileSync(process.execPath, [CLI_PATH, 'analyze', '--root', root, '--out', packDir, '--ts-src', path.join(root, 'src'), '--no-java', '--no-web', '--no-ddl', '--no-mappers', '--no-openapi'], { cwd: root, env, stdio: 'pipe' });
+  const readPack = () => JSON.parse(fs.readFileSync(path.join(packDir, 'pack.json')));
+  assert.equal(readPack().meta.calibration.verdict, 'BOOTSTRAP');
+  const entry = { ...f.entry, packDir: path.join(alias, '.cascade/pack'), dotCascadePath: path.join(alias, '.cascade') };
+  const c = createAutoRefresh({ entries: [entry], intervalMs: 0, run: (e, p, options) => runRefresh(e, p, { ...options, env }) }); t.after(c.close);
+  await c.ensureFresh(); assert.equal(readPack().meta.calibration.mode, 'NO_CHANGE');
+  fs.writeFileSync(source, 'export class Main { a() {} b() {} c() {} d() {} added() {} }');
+  await c.ensureFresh(); assert.equal(readPack().meta.calibration.mode, 'REPIN');
+  const saved = ['pack/pack.json', 'pack/refresh-state.json', 'calibration/baseline.json'].map((file) => [path.join(root, '.cascade', file), null]);
+  for (const item of saved) item[1] = fs.readFileSync(item[0]);
+  fs.writeFileSync(source, 'export class Main {}');
+  await assert.rejects(c.ensureFresh(), /REPIN -> RED/);
+  assert.equal(c.status('sample').verdict, 'behind');
+  for (const [file, bytes] of saved) assert.deepEqual(fs.readFileSync(file), bytes);
 });

@@ -27,7 +27,7 @@ export function refreshArgv(entry, pack) {
   const root = pack.meta?.base?.repoPath;
   const invocation = pack.meta?.analysis?.invocation;
   if (!root || !invocation) throw new RefreshError('this pack lacks a reproducible analysis invocation; run cascade analyze once');
-  const args = [CLI_PATH, 'analyze', javaNeedsCold(entry, pack) ? '--cold' : '--incremental', '--root', root, '--out', entry.packDir];
+  const args = [CLI_PATH, 'analyze', javaNeedsCold(entry, pack) ? '--cold' : '--incremental', '--root', root, '--out', inputPath(entry.packDir)];
   for (const [key, flag] of [['ddl', 'ddl'], ['mappers', 'mappers'], ['javaSrc', 'java-src'], ['webSrc', 'web-src'], ['tsSrc', 'ts-src'], ['openapi', 'openapi'], ['har', 'har'], ['otel', 'otel']]) {
     for (const file of invocation[key] ?? []) args.push(`--${flag}`, path.resolve(root, file));
   }
