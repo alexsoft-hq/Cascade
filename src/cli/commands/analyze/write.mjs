@@ -27,6 +27,7 @@ import { registrationTarget } from '../../../core/resolve.mjs';
 import { buildRoutesIndex, serializeRoutesIndex, ROUTES_FILE } from '../../../mcp/federation.mjs';
 import { engineIdentity, realPath } from '../../env.mjs';
 import { externalSourcesOf } from '../../external_sources.mjs';
+import { sourceContentFingerprint } from '../../auto_refresh.mjs';
 import { keepPreviousPack, pruneHistory, withPackLock, writeAtomic } from '../../pack_history.mjs';
 import { workerVersions } from '../../../core/worker_versions.mjs';
 import { goldenAsk } from '../../serve.mjs';
@@ -200,6 +201,34 @@ export function goldenSummaryOf({ goldenDir, g, pack, profile }) {
   }
 }
 
+/** Capture the normalized saved input inventory before any extraction worker runs. */
+export function captureSourceContent({ flags, selectionRel, base, profileFile, resolved, out, profile }) {
+  const analysis = analysisRecord({ flags, selectionRel, base, profileFile, dotCascade: resolved.dotCascade,
+    optOuts: [], evidence: [] });
+  analysis.declaredInputs = declaredSourceInputs(profile, resolved, selectionRel);
+  return sourceContentFingerprint({ packDir: out, dotCascadePath: resolved.dotCascade },
+    { meta: { base: { ...base, repoPath: selectionRel.root }, analysis } });
+}
+
+/** Match tsLaneOptions: declared Prisma paths are relative to the manifest directory. */
+function declaredSourceInputs(profile, resolved, selectionRel) {
+  return (selectionRel.tsRoots ?? []).length && profile?.tsBackend?.prismaSchema
+    ? [path.resolve(resolved.dotCascade ?? selectionRel.root, profile.tsBackend.prismaSchema)] : [];
+}
+
+/** The calibration pin hashes filesystem inputs, never measurements or parser shard keys. */
+function gateAnalysis({ flags, selectionRel, optOuts, profileDigest, enginePrintNow, evidence, base, pack, resolved, out, sourceContentDigest, profile }) {
+  const analysis = analysisRecord({ flags, selectionRel, optOuts, profileDigest, enginePrintNow, evidence, base,
+    profileFile: pack.meta.profile, dotCascade: resolved.dotCascade, catalogMeta: pack.meta.catalog });
+  analysis.declaredInputs = declaredSourceInputs(profile, resolved, selectionRel);
+  analysis.sourceContentDigest = sourceContentFingerprint({ packDir: out, dotCascadePath: resolved.dotCascade },
+    { meta: { base: { ...base, repoPath: selectionRel.root }, analysis } });
+  if (sourceContentDigest !== undefined && analysis.sourceContentDigest !== sourceContentDigest) {
+    throw new Error('SOURCE_INPUTS_CHANGED: saved inputs changed during analysis; no pack or baseline was published');
+  }
+  return analysis;
+}
+
 /** The lanes a run was told to leave out, each by its flag: leaving one out changes what was analyzed. */
 const OPT_OUT_FLAGS = Object.freeze([['noDdl', '--no-ddl'], ['noMappers', '--no-mappers'], ['noJava', '--no-java'], ['noTs', '--no-ts']]);
 const optOutsOf = (flags) => OPT_OUT_FLAGS.filter(([key]) => flags[key]).map(([, flag]) => flag);
@@ -213,7 +242,7 @@ const optOutsOf = (flags) => OPT_OUT_FLAGS.filter(([key]) => flags[key]).map(([,
  * a `-rejected` directory and leaving the certified one where it was (§7.2 — a
  * failed run never mixes with the good snapshot).
  */
-export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt, evidenceFiles = [], fronts = [] }) {
+export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt, evidenceFiles = [], fronts = [], sourceContentDigest }) {
   const { calibrated, stateDir, calibrationDir, goldenDir, baselineFile, gateStateFile, receiptFile } = stateFiles(resolved, out);
 
   const sqlStats = sqlLaneTallies(lineage);
@@ -222,12 +251,12 @@ export function runGate({ flag, die }, { g, pack, out, resolved, profile, lineag
   const catalogDigest = catalog.length > 0 ? catalogDigestOf(catalog) : null;
   const optOuts = optOutsOf(flags);
   const evidence = evidenceFiles.map(([kind, f]) => `${kind}:${sha256File(f)}`);
+  const enginePrintNow = runningEnginePrint();
+  const analysis = gateAnalysis({ flags, selectionRel, optOuts, profileDigest, enginePrintNow, evidence, base, pack, resolved, out, sourceContentDigest, profile });
   const pin = pinOf({
     commit: base?.commit ?? null, dirty: base?.dirty === true,
-    selection: selectionRel, optOuts, profileDigest, catalogDigest, evidence, fronts,
+    selection: selectionRel, optOuts, profileDigest, catalogDigest, evidence, fronts, sourceContentDigest: analysis.sourceContentDigest,
   });
-  const enginePrintNow = runningEnginePrint();
-
   let baseline = null;
   if (calibrated && fs.existsSync(baselineFile)) {
     try { baseline = validateBaseline(JSON.parse(fs.readFileSync(baselineFile, 'utf8'))); }
@@ -275,10 +304,7 @@ pack.meta.calibration = {
 // the code only when these agree, so they are recorded where a later comparison
 // can read them: the worker versions, the normalized profile's digest, the engine,
 // the opt-out flags and the source roots. Metadata, so outside the digest.
-pack.meta.analysis = analysisRecord({
-  flags, selectionRel, optOuts, profileDigest, enginePrintNow, evidence, base,
-  profileFile: pack.meta.profile, dotCascade: resolved.dotCascade, catalogMeta: pack.meta.catalog,
-});
+pack.meta.analysis = analysis;
 
   return {
     calibrated, verdict, red, gate, gateState, goldenSummaryDoc, overrideOf, enginePrintNow, pin, metrics,

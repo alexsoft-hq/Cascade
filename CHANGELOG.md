@@ -47,6 +47,10 @@ Each dated section below is one round of work. The round protocol is in
   Each fingerprint scan hashes a real file once across overlapping input roots;
   later requests still validate saved bytes. Generated agent MCP configuration
   preserves the selected registry through `CASCADE_HOME`, including Codex TOML.
+  Calibration pins distinguish saved input bytes from engine identity, including
+  ignored files and successive uncommitted edits, without bypassing regression
+  gates. TypeScript input roots use canonical paths so Windows short names and
+  directory aliases do not turn internal files into external ones.
 
 - **Source-backed NestJS prefix exclusions.** Imported literal constants,
   templates, string `substring`, array spreads and pure primitive-array `map`

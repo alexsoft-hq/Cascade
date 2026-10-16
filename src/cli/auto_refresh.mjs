@@ -74,6 +74,15 @@ function javaChangesetFiles(root, index) {
 
 /** Content, including untracked files and resolved symlinks; generated state is excluded. */
 export function sourceFingerprint(entry, pack) {
+  return hash({ engine: currentEngine(), ...sourceInputs(entry, pack) });
+}
+
+/** Calibration identifies saved inputs, independently of worker output and engine identity. */
+export function sourceContentFingerprint(entry, pack) {
+  return hash(sourceInputs(entry, pack, { recorded: false, allowUnversioned: true }));
+}
+
+function sourceInputs(entry, pack, { recorded = true, allowUnversioned = false } = {}) {
   const root = path.resolve(pack.meta.base.repoPath);
   const excluded = [path.resolve(entry.packDir), path.resolve(`${entry.packDir}-rejected`), ...(entry.dotCascadePath ? [path.resolve(entry.dotCascadePath)] : [])];
   const lines = [], fileHash = createFileHashCache();
@@ -84,7 +93,10 @@ export function sourceFingerprint(entry, pack) {
     head = git(['rev-parse', 'HEAD']).trim();
     try { head += ':' + git(['symbolic-ref', '--quiet', 'HEAD']).trim(); } catch { head += ':detached'; }
     files = git(['ls-files', '-z', '--cached', '--others', '--exclude-standard']).split('\0').filter(Boolean);
-  } catch { throw new RefreshError('cannot establish source HEAD and file inventory'); }
+  } catch {
+    if (!allowUnversioned) throw new RefreshError('cannot establish source HEAD and file inventory');
+    head = null; files = unversionedFiles(root, excluded);
+  }
   for (const rel of [...new Set(files)].sort()) {
     const file = path.resolve(root, rel);
     if (excluded.some((dir) => inside(file, dir)) || rel.split(/[\\/]/).includes('.cascade')) continue;
@@ -104,9 +116,9 @@ export function sourceFingerprint(entry, pack) {
     if (!excluded.some((dir) => inside(absolute, dir))) external[absolute] = absolute === root ? selectedRootDigest(root, excluded, analysis, digestOf) : digestOf(absolute);
   }
   Object.assign(external, webPackageDigests(root, analysis, digestOf));
-  Object.assign(external, supplementaryDigests(entry, pack, root, analysis, excluded, digestOf));
+  Object.assign(external, supplementaryDigests(entry, pack, root, analysis, excluded, digestOf, recorded));
   const profile = analysis.invocation?.profile;
-  const extras = [profile ? path.resolve(root, profile) : null,
+  const extras = [...(analysis.declaredInputs ?? []).map((file) => path.resolve(root, file)), profile ? path.resolve(root, profile) : null,
     ...(entry.dotCascadePath ? ['profile.json', 'manifest.json', 'catalog', 'golden'].map((name) => path.join(entry.dotCascadePath, name)) : [])].filter(Boolean);
   for (const file of extras) external[file] = digestOf(file);
   for (const file of Object.keys(external).filter((item) => path.isAbsolute(item) && !inside(item, root) && !item.includes('#'))) {
@@ -116,7 +128,21 @@ export function sourceFingerprint(entry, pack) {
     } catch { /* not every external input belongs to a repository */ }
   }
   if (Object.values(external).includes('unreadable')) throw new RefreshError('an analysis input is unreadable');
-  return hash({ engine: currentEngine(), head, lines, external, invocation: analysis.invocation });
+  return { head, lines, external, invocation: analysis.invocation };
+}
+
+/** Non-Git analyze targets still have content identity; never walk generated state. */
+function unversionedFiles(root, excluded) {
+  const files = [];
+  const walk = (dir) => {
+    for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, item.name);
+      if (excluded.some((out) => inside(file, out)) || ['.git', 'node_modules', '.cascade'].includes(item.name)) continue;
+      if (item.isDirectory()) walk(file);
+      else files.push(path.relative(root, file));
+    }
+  };
+  walk(root); return files;
 }
 
 const activeRoots = (analysis, selection, invocation, disabled) => analysis.invocation?.[disabled] ? []
@@ -138,7 +164,7 @@ function recordedSources(entry, pack) {
 
 /** Inputs beside source roots must be watched even when Git ignores them.
  * Read inventory through the analyzer's own helpers, not a second config parser. */
-function supplementaryDigests(entry, pack, root, analysis, excluded, digestOf) {
+function supplementaryDigests(entry, pack, root, analysis, excluded, digestOf, includeRecorded) {
   const files = new Set();
   const javaRoots = activeRoots(analysis, 'javaRoots', 'javaSrc', 'noJava');
   for (const selected of javaRoots) for (const file of springConfigFilesBeside(path.resolve(root, selected))) files.add(file);
@@ -146,10 +172,10 @@ function supplementaryDigests(entry, pack, root, analysis, excluded, digestOf) {
   const tsRoots = activeRoots(analysis, 'tsRoots', 'tsSrc', 'noTs');
   if (tsRoots.length > 0) for (const file of tsCandidateFiles(root)) if (!excluded.some((dir) => inside(file, dir))) files.add(file);
   const disabled = { java: 'noJava', ts: 'noTs', web: 'noWeb' };
-  const recorded = recordedSources(entry, pack).filter((f) => f.lanes.some((lane) => !analysis.invocation?.[disabled[lane]]));
+  const recorded = (includeRecorded ? recordedSources(entry, pack) : []).filter((f) => f.lanes.some((lane) => !analysis.invocation?.[disabled[lane]]));
   for (const f of recorded) files.add(path.resolve(root, f.path));
-  const tsFiles = recorded.filter((f) => f.lanes.includes('ts')).map((f) => path.resolve(root, f.path));
-  const schemaPath = pack.meta?.laneStats?.ts?.prismaSchema?.path;
+  const tsFiles = includeRecorded ? recorded.filter((f) => f.lanes.includes('ts')).map((f) => path.resolve(root, f.path)) : tsRoots.length ? tsCandidateFiles(root) : [];
+  const schemaPath = includeRecorded ? pack.meta?.laneStats?.ts?.prismaSchema?.path : null;
   const schema = schemaPath ? path.resolve(root, schemaPath) : null;
   for (const selected of tsRoots) {
     for (const file of tsSupplementaryFiles(root, path.resolve(root, selected), schema, tsFiles)) files.add(file);
@@ -253,6 +279,15 @@ function structureMatches(entry, pack) {
   catch { return false; }
 }
 
+/** Retry only a verified source race; preserve ordinary build failures for this input. */
+async function runAttempt({ run, entry, pack, signal, fingerprint, digest, state, failureKey }) {
+  try { await run(entry, pack, { signal }); return true; }
+  catch (error) {
+    if (!signal.aborted && error.message.includes('SOURCE_INPUTS_CHANGED') && fingerprint(entry, pack) !== digest) return false;
+    state.failure = { key: failureKey, message: error.message }; throw error;
+  }
+}
+
 export function createAutoRefresh({ entries, enabled = true, fingerprint = sourceFingerprint, run = runRefresh, validStructure = structureMatches, intervalMs = 30000, now = () => new Date().toISOString() }) {
   const states = new Map(entries.map((entry) => [entry.id, { entry, pending: null, verdict: 'unknown', reason: enabled ? 'not checked' : 'automatic refresh disabled (--no-watch)', success: null, failure: null }]));
   const abort = new AbortController();
@@ -280,8 +315,7 @@ export function createAutoRefresh({ entries, enabled = true, fingerprint = sourc
       const failureKey = `${identity}:${digest}`;
       if (state.failure?.key === failureKey) throw new RefreshError(state.failure.message);
       Object.assign(state, { verdict: 'behind', reason: 'source changes require analysis' });
-      try { await run(entry, pack, { signal: abort.signal }); }
-      catch (error) { state.failure = { key: failureKey, message: error.message }; throw error; }
+      if (!await runAttempt({ run, entry, pack, signal: abort.signal, fingerprint, digest, state, failureKey })) continue;
       if (closed) throw new RefreshError('refresh coordinator closed');
       const updated = readJson(path.join(entry.packDir, 'pack.json'));
       if (!validStructure(entry, updated)) throw new RefreshError('analysis did not publish a valid structure sidecar');

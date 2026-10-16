@@ -133,6 +133,7 @@ const ALLOWED_HOSTS = new Set([
   'creativecommons.org',           // the CC BY 4.0 deed the Covenant is licensed under
   'mozilla.org',                   // Mozilla's code-of-conduct enforcement ladder, cited by the Covenant
   'docs.github.com',               // GitHub's private vulnerability reporting docs (SECURITY.md)
+  'learn.chatgpt.com',             // official Codex MCP configuration documentation
   'developercertificate.org',      // the canonical DCO 1.1 text this repository vendors
   'keepachangelog.com',            // the CHANGELOG format this file follows
   'semver.org',                    // the versioning scheme the CHANGELOG declares

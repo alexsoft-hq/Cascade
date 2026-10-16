@@ -141,15 +141,23 @@ test('real analyze cold/incremental runs persist identical structure and verifie
   execFileSync('git', ['-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-qm', 'fixture'], { cwd: root });
   const cli = fileURLToPath(new URL('../bin/cascade.mjs', import.meta.url));
   const out = path.join(root, 'out');
-  const run = (mode) => {
-    execFileSync(process.execPath, [cli, 'analyze', '--root', root, '--out', out, '--ts-src', path.join(root, 'src'), '--no-java', '--no-web', '--no-ddl', '--no-mappers', '--no-openapi', mode], { cwd: root, stdio: 'pipe' });
+  const run = (mode, sourceRoot = path.join(root, 'src')) => {
+    execFileSync(process.execPath, [cli, 'analyze', '--root', root, '--out', out, '--ts-src', sourceRoot, '--no-java', '--no-web', '--no-ddl', '--no-mappers', '--no-openapi', mode], { cwd: root, stdio: 'pipe' });
     const pack = JSON.parse(fs.readFileSync(path.join(out, 'pack.json'), 'utf8'));
     const structure = JSON.parse(fs.readFileSync(path.join(out, 'structure.json'), 'utf8'));
     return validateStructure(structure, { pack });
   };
   const cold = run('--cold');
   assert.deepEqual(run('--incremental'), cold);
-  assert.ok(cold.files.every((f) => f.sha256?.length === 64 && !f.external));
+  assert.ok(cold.files.every((f) => f.sha256?.length === 64 && !f.external), JSON.stringify(cold.files));
+  assert.deepEqual(cold.files.map((f) => f.path), ['src/a.ts', 'src/b.ts']);
+  // An explicit source root can spell the same directory differently from
+  // the canonical project root (symlinks, or Windows short temp-directory names).
+  const alias = `${root}-alias`;
+  fs.symlinkSync(root, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  t.after(() => fs.rmSync(alias, { recursive: true, force: true }));
+  assert.deepEqual(run('--cold', path.join(alias, 'src')), cold);
+  assert.deepEqual(run('--incremental', path.join(alias, 'src')), cold);
   fs.unlinkSync(path.join(root, 'src/b.ts'));
   const changed = run('--incremental');
   assert.equal(changed.files.some((f) => f.path === 'src/b.ts'), false);

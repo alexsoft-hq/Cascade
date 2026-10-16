@@ -491,3 +491,19 @@ test('the same graph under the same engine and pin is NO_CHANGE and GREEN with t
   const r = gateEvaluate({ baseline, current: { enginePrint: 'e1', pin: baseline.pin, profileDigest: null, catalogDigest: null, metrics: calibrationMetrics(g, {}) }, profile: {} });
   assert.deepEqual([r.mode, r.verdict], ['NO_CHANGE', 'GREEN']);
 });
+
+test('source content moves the pin without changing engine semantics or bypassing repin budgets', () => {
+  const base = { commit: 'same', dirty: false, selection: { javaRoots: ['src'] } };
+  const pin = pinOf({ ...base, sourceContentDigest: 'a'.repeat(64) });
+  const changed = pinOf({ ...base, sourceContentDigest: 'b'.repeat(64) });
+  const metrics = metricsOf({}, { 'node:symbol': 10 });
+  const baseline = baselineWith('engine', pin, metrics);
+  const evaluate = (currentPin, count) => gateEvaluate({ baseline, current: { enginePrint: 'engine', pin: currentPin, metrics: metricsOf({}, { 'node:symbol': count }) } });
+  assert.equal(evaluate(pin, 10).mode, 'NO_CHANGE');
+  assert.equal(evaluate(pin, 11).verdict, 'RED');
+  assert.equal(evaluate(changed, 9).mode, 'REPIN');
+  assert.equal(evaluate(changed, 9).verdict, 'GREEN');
+  assert.equal(evaluate(changed, 1).verdict, 'RED');
+  assert.notEqual(pin.inputsDigest, pinOf(base).inputsDigest);
+  assert.throws(() => pinOf({ ...base, sourceContentDigest: 'opaque-token' }), /SHA256/);
+});

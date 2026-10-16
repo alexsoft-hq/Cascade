@@ -29,7 +29,7 @@ import { withPackLock } from '../../pack_history.mjs';
 import { codeSettingDiagnostics } from '../../../core/code_settings.mjs';
 import { catalogDiagnostics, catalogReadStats } from '../../../core/catalog_read.mjs';
 import { prefixNotOnCallsNotes, unusedPrefixNotes } from './prefix_notes.mjs';
-import { buildPack, lockDirFor, rejectRun, runGate, stateFiles, updateRegistry, writeArtifacts } from './write.mjs';
+import { buildPack, captureSourceContent, lockDirFor, rejectRun, runGate, stateFiles, updateRegistry, writeArtifacts } from './write.mjs';
 import { analyzeTarget, incrementalPlan, jpaImplicitNamingConfigured, jpaNamingConfigured, laneSelection, noteDirtyReached } from './inputs.mjs';
 import { overlayInputsRecord } from '../../overlay_inputs.mjs';
 import { buildStructure, matchingSourceHashes, structureMetadata } from '../../../core/structure.mjs';
@@ -333,7 +333,7 @@ function certify(ctx, prepared, facts) {
     const gated = runGate(lockedCtx, {
       g, pack, out, resolved, profile, lineage, catalog, laneStats, selectionRel, flags, base, builtAt,
       evidenceFiles: [...prepared.harFiles.map((f) => ['har', f]), ...prepared.otelFiles.map((f) => ['otel', f])],
-      fronts: result.index.overlayInputs.webRepositories ?? [],
+      fronts: result.index.overlayInputs.webRepositories ?? [], sourceContentDigest: prepared.sourceContentDigest,
     });
     return writeArtifacts({ ...gated, g, pack, result, out, profile, builtAt, projectId, serviceNames, otelFiles, relOf, locked: true });
   });
@@ -345,6 +345,7 @@ function certify(ctx, prepared, facts) {
 
 export function run(ctx) {
   const prepared = prepare(ctx);
+  prepared.sourceContentDigest = captureSourceContent(prepared);
   // The scratch directory is registered with the exit sweeper BEFORE the work
   // starts: the calibration gate's RED path calls process.exit(3) from inside
   // this try, and process.exit does not run `finally`. The eager remove in the

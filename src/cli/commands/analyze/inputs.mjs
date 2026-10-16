@@ -118,13 +118,15 @@ export function laneFlags({ optAll, flag, die }) {
  * a root given through the other spelling would make every "is this file under
  * a source root?" comparison fail silently, by answering "nothing changed".
  */
+// TS consumers use sel.tsSrc directly. Canonicalize it too, including Windows
+// 8.3 aliases, before the worker makes paths relative to the canonical root.
 export function laneInputs({ die }, { sel, resolved, diagnostics }) {
   const ddls = sel.ddls.map(realPath);
   const ddl = ddls[0] ?? null;
   const snapshot = sel.snapshot ? realPath(sel.snapshot) : null;
   const mappers = sel.mappers.map(realPath);
-  const javaSrc = sel.javaSrc.map(realPath);
-  const webSrc = sel.webSrc.map(realPath);
+  const javaSrc = sel.javaSrc.map(realPath), webSrc = sel.webSrc.map(realPath);
+  sel.tsSrc = sel.tsSrc.map(realPath);
   for (const [flag, paths] of [['openapi', sel.openapi], ['har', sel.har], ['otel', sel.otel], ['ddl', ddls], ['web-src', webSrc], ['ts-src', sel.tsSrc]]) {
     for (const p of paths) if (!fs.existsSync(p)) die(`--${flag} ${p} does not exist`);
   }

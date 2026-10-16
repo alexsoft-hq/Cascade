@@ -131,6 +131,12 @@ Automatic refresh never passes `--accept-baseline`. A gate that requires a
 human decision still requires one. It also does not fetch live database
 metadata; catalog snapshots remain explicit inputs.
 
+The calibration pin includes an engine-independent fingerprint of saved inputs,
+including selected ignored files. Two different uncommitted states are different
+inputs even when Git reports the same commit and dirty flag. Repeating the same
+inputs still checks for nondeterminism, and substantial analysis regressions can
+still reject a refresh and retain the last accepted pack.
+
 `--no-watch` disables automatic pack publication. The existing `changed_impact`
 tool can still build its request-scoped working-tree overlay against that
 snapshot; its own freshness and provisional markers continue to apply.

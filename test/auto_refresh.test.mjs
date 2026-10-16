@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import { createAutoRefresh, sourceFingerprint, refreshArgv, runRefresh, rootLaneSources } from '../src/cli/auto_refresh.mjs';
+import { createAutoRefresh, sourceFingerprint, sourceContentFingerprint, refreshArgv, runRefresh, rootLaneSources } from '../src/cli/auto_refresh.mjs';
 import { handleRpc } from '../src/mcp/stdio.mjs';
 import { handleApi } from '../src/mcp/http.mjs';
 import { readTsconfigPaths, tsSupplementaryFiles, tsCandidateFiles } from '../src/cli/ts_inputs.mjs';
@@ -12,7 +12,7 @@ import { jpaNamingConfigured } from '../src/cli/commands/analyze/inputs.mjs';
 import { findJdk } from '../src/cli/env.mjs';
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-refresh-'));
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-refresh-')));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const packDir = path.join(root, '.cascade', 'pack'); fs.mkdirSync(packDir, { recursive: true });
   const entry = { id: 'sample', packDir, dotCascadePath: path.dirname(packDir) };
@@ -91,6 +91,7 @@ test('real TS analysis refreshes a Git-ignored imported file outside the selecte
   for (const dir of ['api/src', 'lib']) fs.mkdirSync(path.join(f.root, dir), { recursive: true });
   fs.writeFileSync(path.join(f.root, '.gitignore'), '.cascade/\nlib/\n');
   fs.writeFileSync(path.join(f.root, 'api/src/a.ts'), "import { Shared } from '../../lib/shared'; export class A extends Shared {}");
+  fs.writeFileSync(path.join(f.root, 'api/src/stable.ts'), 'export class Stable { a() {} b() {} c() {} d() {} e() {} f() {} g() {} h() {} }');
   const shared = path.join(f.root, 'lib/shared.ts'); fs.writeFileSync(shared, 'export class Shared { before() {} }');
   commitFixture(f.root);
   const { CLI_PATH } = await import('../src/cli/env.mjs');
@@ -479,4 +480,87 @@ test('optional shared content hasher preserves existing directory, external conf
   assert.deepEqual(externalSourcesOf(args, {}, cached), externalSourcesOf(args));
   assert.equal(contentDigestOf(path.join(f.root, 'gone'), cached), 'missing');
   assert.equal(contentDigestOf(f.root, () => { throw new Error('read failed'); }), 'unreadable');
+});
+
+test('calibration source identity includes ignored/external content but excludes engine, parser output and own state', (t) => {
+  const f = fixture(t), outside = fixture(t);
+  fs.mkdirSync(path.join(f.root, 'api')); fs.mkdirSync(path.join(f.root, 'ignored'));
+  fs.writeFileSync(path.join(f.root, 'api/a.ts'), 'export class A {}');
+  fs.writeFileSync(path.join(f.root, '.gitignore'), '.cascade/\nignored/'); commitFixture(f.root);
+  const hidden = path.join(f.root, 'ignored/shared.ts'), external = path.join(outside.root, 'external.ts');
+  fs.writeFileSync(hidden, 'export class Shared {}'); fs.writeFileSync(external, 'export class External {}');
+  f.pack.meta.analysis = { invocation: { tsSrc: ['api', outside.root], noJava: true, noWeb: true }, selection: { tsRoots: ['api', outside.root] } };
+  const digest = () => sourceContentFingerprint(f.entry, f.pack);
+  const first = digest();
+  f.pack.meta.analysis.enginePrint = 'different'; f.pack.meta.analysis.workers = { ts: 'different' };
+  f.pack.meta.structure = { digest: 'different', inputDigest: 'different' };
+  f.pack.meta.laneStats = { ts: { prismaSchema: { path: 'parser-output' } } };
+  fs.writeFileSync(path.join(f.entry.packDir, 'facts-index.json'), '{"files":{"arbitrary":"parser-output"}}');
+  fs.mkdirSync(path.join(f.entry.dotCascadePath, 'calibration')); fs.writeFileSync(path.join(f.entry.dotCascadePath, 'calibration/baseline.json'), '{}');
+  fs.mkdirSync(`${f.entry.packDir}-rejected`); fs.writeFileSync(path.join(`${f.entry.packDir}-rejected`, 'pack.json'), '{}');
+  assert.equal(digest(), first);
+  fs.writeFileSync(hidden, 'export class Changed {}'); assert.notEqual(digest(), first);
+  const edited = digest(); fs.unlinkSync(hidden); assert.notEqual(digest(), edited);
+  const deleted = digest(); fs.writeFileSync(hidden, 'export class Added {}'); assert.notEqual(digest(), deleted);
+  const added = digest(); fs.writeFileSync(external, 'export class ExternalChanged {}'); assert.notEqual(digest(), added);
+  const schema = path.join(outside.root, 'custom.prisma');
+  f.pack.meta.analysis.declaredInputs = [schema];
+  const missing = digest(); fs.writeFileSync(schema, 'model Item { id Int @id }'); assert.notEqual(digest(), missing);
+});
+
+test('a real large source deletion still fails the repin gate and preserves the last good pack', async (t) => {
+  const f = fixture(t), cache = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-refresh-large-drop-'));
+  t.after(() => fs.rmSync(cache, { recursive: true, force: true }));
+  const env = { ...process.env, CASCADE_HOME: cache };
+  fs.mkdirSync(path.join(f.root, 'src')); fs.writeFileSync(path.join(f.root, '.gitignore'), '.cascade/\nsrc/ignored.ts\n');
+  fs.writeFileSync(path.join(f.root, 'src/main.ts'), 'export class Main {}');
+  const hidden = path.join(f.root, 'src/ignored.ts'); fs.writeFileSync(hidden, 'export class Hidden { a() {} b() {} c() {} d() {} }');
+  commitFixture(f.root);
+  const { CLI_PATH } = await import('../src/cli/env.mjs');
+  execFileSync(process.execPath, [CLI_PATH, 'analyze', '--root', f.root, '--out', f.entry.packDir, '--ts-src', path.join(f.root, 'src'), '--no-java', '--no-web', '--no-ddl', '--no-mappers', '--no-openapi'], { cwd: f.root, env, stdio: 'pipe' });
+  const c = createAutoRefresh({ entries: [f.entry], intervalMs: 0, run: (entry, pack, options) => runRefresh(entry, pack, { ...options, env }) }); t.after(c.close);
+  await c.ensureFresh();
+  const packBefore = fs.readFileSync(path.join(f.entry.packDir, 'pack.json'));
+  const receiptBefore = fs.readFileSync(path.join(f.entry.packDir, 'refresh-state.json'));
+  fs.unlinkSync(hidden);
+  await assert.rejects(c.ensureFresh(), /REPIN -> RED/);
+  assert.equal(c.status('sample').verdict, 'behind');
+  assert.deepEqual(fs.readFileSync(path.join(f.entry.packDir, 'pack.json')), packBefore);
+  assert.deepEqual(fs.readFileSync(path.join(f.entry.packDir, 'refresh-state.json')), receiptBefore);
+});
+
+test('a saved edit after real worker extraction cannot poison the pack or baseline, and a stable refresh recovers', async (t) => {
+  const f = fixture(t), cache = fs.mkdtempSync(path.join(os.tmpdir(), 'cascade-refresh-race-'));
+  t.after(() => fs.rmSync(cache, { recursive: true, force: true }));
+  const env = { ...process.env, CASCADE_HOME: cache };
+  fs.mkdirSync(path.join(f.root, 'src')); fs.writeFileSync(path.join(f.root, '.gitignore'), '.cascade/');
+  const source = path.join(f.root, 'src/main.ts');
+  fs.writeFileSync(source, 'export class Main { a() {} b() {} c() {} d() {} }'); commitFixture(f.root);
+  const { CLI_PATH } = await import('../src/cli/env.mjs');
+  const args = [CLI_PATH, 'analyze', '--root', f.root, '--out', f.entry.packDir, '--ts-src', path.join(f.root, 'src'), '--no-java', '--no-web', '--no-ddl', '--no-mappers', '--no-openapi'];
+  execFileSync(process.execPath, args, { cwd: f.root, env, stdio: 'pipe' });
+  const baselineFile = path.join(f.entry.dotCascadePath, 'calibration/baseline.json');
+  const packBefore = fs.readFileSync(path.join(f.entry.packDir, 'pack.json')), baselineBefore = fs.readFileSync(baselineFile);
+  const preload = path.join(cache, 'race.cjs');
+  fs.writeFileSync(preload, `const cp = require('node:child_process'), fs = require('node:fs');
+const original = cp.execFileSync;
+cp.execFileSync = function(command, args, options) {
+  const result = original.call(this, command, args, options);
+  if (args?.some(a => String(a).endsWith('tsfacts.mjs')) && !args.includes('--list')) {
+    fs.writeFileSync(process.env.CASCADE_RACE_SOURCE, 'export class Main { a() {} b() {} c() {} d() {} added() {} }');
+  }
+  return result;
+};
+require('node:module').syncBuiltinESMExports();`);
+  fs.writeFileSync(source, 'export class Main { a() {} b() {} c() {} d() {} changed() {} }');
+  assert.throws(() => execFileSync(process.execPath, ['--require', preload, ...args], {
+    cwd: f.root, env: { ...env, CASCADE_RACE_SOURCE: source }, stdio: 'pipe',
+  }), /SOURCE_INPUTS_CHANGED/);
+  assert.deepEqual(fs.readFileSync(path.join(f.entry.packDir, 'pack.json')), packBefore);
+  assert.deepEqual(fs.readFileSync(baselineFile), baselineBefore);
+  const c = createAutoRefresh({ entries: [f.entry], intervalMs: 0, run: (entry, pack, options) => runRefresh(entry, pack, { ...options, env }) }); t.after(c.close);
+  await c.ensureFresh(); assert.equal(c.status('sample').verdict, 'current');
+  const pack = JSON.parse(fs.readFileSync(path.join(f.entry.packDir, 'pack.json')));
+  assert.equal(pack.meta.calibration.mode, 'REPIN');
+  assert.ok(JSON.parse(fs.readFileSync(path.join(f.entry.packDir, 'structure.json'))).declarations.some((d) => d.name === 'added'));
 });
