@@ -2,12 +2,21 @@
 
 # <picture><source media="(prefers-color-scheme: dark)" srcset="docs/assets/cascade-mark-dark.svg"><img src="docs/assets/cascade-mark.svg" width="28" alt=""></picture> Cascade
 
-Persistent code structure and code-to-column change impact for AI coding agents,
-with automatic refresh of saved local changes. Apache-2.0.
+**Understand the code. Find where to work. Check what a change reaches.**
 
-- [A picture first](#a-picture-first)
-- [What it answers](#what-it-answers)
+Cascade 0.9 gives AI coding agents a stored view of project structure they can
+query across sessions. Start from a project briefing, find the relevant
+functions and source, then trace a proposed change through services, APIs and
+database columns. When you save a local edit, Cascade checks for changes and
+waits for any required analysis before answering.
+
+Available over **MCP**, in the **CLI**, and in a **local web viewer**. Analysis
+uses the selected Java, TypeScript and frontend inputs. Apache-2.0.
+
+- [A coding session with Cascade 0.9](#a-coding-session-with-cascade-09)
 - [Code context for AI coding](#code-context-for-ai-coding)
+- [What it answers](#what-it-answers)
+- [Change impact in practice](#change-impact-in-practice)
 - [Supported stacks](#supported-stacks)
 - [Install](#install)
 - [Ten minutes on your own project](#ten-minutes-on-your-own-project)
@@ -22,7 +31,92 @@ with automatic refresh of saved local changes. Apache-2.0.
 - [Contributing, security, conduct](#contributing-security-conduct)
 - [License](#license)
 
-## A picture first
+## A coding session with Cascade 0.9
+
+1. **Start with the project's saved structure.** `session_briefing` summarizes
+   the indexed scope, recorded entry points, freshness and limits. `architecture`
+   shows dependencies between directory groups with source evidence.
+2. **Find the code that matters.** Use `code_search` and `file_outline` to locate
+   declarations, `code_trace` to follow recorded callers and callees, and
+   `code_snippet` to read the relevant source.
+3. **Save an edit and query again.** Source-backed MCP and viewer sessions check
+   saved inputs and wait for any required refresh. `index_status` reports the
+   generation and refresh state, including failures.
+4. **Check the change's reach.** Use `changed_impact` for edited files and `flow`
+   or the column-impact tools for related services, APIs, tables and screens.
+   Read the evidence grades and coverage limits with each answer.
+
+The saved analysis is reusable project context. It does not store an agent's
+conversation or previous reasoning. See the [0.9 walkthrough](docs/code-intelligence-demo.md)
+for a step-by-step check on your own project.
+
+## Code context for AI coding
+
+The structure index preserves files, declarations and recorded relationships
+from an analysis so the next session can query them again. The agent can use
+that map to choose which source to inspect for a task. `code_context` collects
+name/path matches and nearby relationships within an answer-byte budget;
+`code_snippet` checks the source hash before returning a declaration's exact
+parser-backed span. Java overloads and constructors have distinct identities.
+
+The viewer's **Code** workspace brings briefing copy, module dependencies,
+declaration search, file outlines and verified source into one place.
+
+```sh
+cascade init --root /path/to/project
+cascade analyze --root /path/to/project
+cascade code briefing --root /path/to/project
+cascade code architecture --root /path/to/project
+cascade code context --root /path/to/project --query OrderService --max-bytes 16384
+```
+
+[Connect your AI agent](#set-it-up-for-your-ai-agent) to use these tools over MCP,
+or run `cascade view --root /path/to/project` to explore the same analysis.
+
+Source-backed MCP and viewer sessions check saved changes and refresh the
+analysis automatically. Queries wait for the required refresh; a failed build
+does not silently become a current answer. `--no-watch` serves the existing
+snapshot. Unsaved editor buffers are not inputs, and disconnected packs retain
+unknown freshness. Existing calibration gates still apply; automatic refresh
+never accepts a new baseline on your behalf.
+
+Structure comes from the selected Java, TypeScript and frontend analysis facts,
+not an all-language index. Missing relationships remain unknown; directory
+groups are structural summaries, not inferred business intent. Structure has
+its own digest and coverage and does not change the impact graph's edge grades.
+`code_trace` distinguishes local, imported and immutable-alias calls from
+callback references, which do not prove invocation. Compact `flow` responses
+share repeated impact evidence and report omitted rows and continuation;
+inspect those limits before treating a shortened response as the full result.
+Context budgets count UTF-8 bytes, not model tokens. See
+[code intelligence and freshness](docs/code-intelligence.md) for the contract
+and the [0.9 walkthrough](docs/code-intelligence-demo.md) to try each feature.
+The [supported-language evaluation](docs/code-intelligence-evaluation.md)
+records checks on Java/JavaScript examples, Ghostfolio and Cascade itself.
+
+## What it answers
+
+Use structure tools to locate the work and impact tools to inspect what a
+change can reach. `tools/list` is the full surface.
+
+| Question | Tool |
+|---|---|
+| I am starting a session. What has been indexed, and is it current? | `session_briefing`, `index_status` |
+| Where is this behavior defined, and which recorded functions call it? | `code_search`, `file_outline`, `code_trace` |
+| What source and nearby relationships should I inspect for this task? | `code_context`, `code_snippet` |
+| I am about to change this column. Which HTTP endpoints are affected? | `endpoint_impact` |
+| Which **screens** does that column reach, through the frontend's own calls? | `screen_impact` |
+| Which SQL statements read or write it, and which of those write? | `column_impact` |
+| I am about to change this endpoint or open this screen. What does it run through, down to the tables? | `flow` |
+| I have edited these files but not committed. What is the blast radius right now? | `changed_impact` |
+| Which two API groups share data through the database without calling each other? | `coupling` |
+
+<a id="a-picture-first"></a>
+
+## Change impact in practice
+
+Once you have found the code to edit, inspect the data-facing paths it can
+affect. The card below shows Cascade's existing column-to-screen analysis.
 
 ![One column and everything above it, drawn by Cascade from litemall:
 litemall_admin.username is used by 10 SQL statements, 11 service methods, 6 API
@@ -46,84 +140,19 @@ the joins the SQL makes on mall](docs/assets/cascade-demo.gif)
 That is one column changed and the answer read in both directions, on two real
 open-source projects. The still shots below walk the same views one at a time.
 
-Cascade answers one question in both directions: **if I change this database
-column, which SQL statements, service methods, HTTP endpoints and user-facing
-screens are affected, and if I open this screen, which column does it end at?**
-It answers over MCP so an AI coding agent can ask before it edits, and it draws
-the same answers in a local viewer so a person can read them.
-
-Every edge carries its own grade, so an answer tells you exactly how far to
-trust it: what was proved, what is a sound candidate set, what is a hint. An AI
-agent reads that grade and knows whether it can act on an answer or should check
-it first, which is what makes an impact graph safe to hand to something that
-edits code on its own. What a parser cannot see, Cascade leaves out and says so:
-runtime wiring, reflection and AOP proxies are marked absent, never guessed.
-That calibration is the product, not a caveat.
+For data-facing changes, follow a column up to SQL statements, service methods,
+HTTP endpoints and screens, or follow a screen back down to the data it uses.
+The impact tools return these paths over MCP; the viewer draws them for people.
+Each edge carries its own evidence grade so recorded facts, candidate sets and
+heuristics remain distinguishable.
 
 ### Where it fits
 
-SAST and CodeQL look for vulnerabilities. Cascade looks for what a change
-reaches, the round trip from a screen to a database column and back, with a
-grade on every edge and no build to run. No SAST or dependency scanner answers
-that round trip. Where the source does not settle a call, Cascade marks it
-rather than inventing an edge, because an answer you can calibrate is one an
-agent can act on, and that is the whole point.
-
-## What it answers
-
-The impact questions below complement the code-structure tools in the next
-section. `tools/list` is the full surface.
-
-| Question | Tool |
-|---|---|
-| I am about to change this column. Which HTTP endpoints are affected? | `endpoint_impact` |
-| Which **screens** does that column reach, through the frontend's own calls? | `screen_impact` |
-| Which SQL statements read or write it, and which of those write? | `column_impact` |
-| I am about to change this endpoint or open this screen. What does it run through, down to the tables? | `flow` |
-| I have edited these files but not committed. What is the blast radius right now? | `changed_impact` |
-| Which two API groups share data through the database without calling each other? | `coupling` |
-
-## Code context for AI coding
-
-Start each session with `session_briefing`: a short account of the indexed
-structure, recorded entry points, freshness and analysis limits. `architecture`
-shows directed dependencies between directory groups with their evidence. Use
-`code_search` and `file_outline` to locate files, types and functions, then
-`code_snippet` to read the exact declaration span after checking the source hash.
-`code_context` collects relevant declarations and relationships within a budget.
-`code_trace` follows recorded callers and callees without hiding intermediate
-functions. Local calls, immutable aliases and imported functions are distinct
-from callback references, which do not prove invocation. For impact paths,
-`flow` supports a compact, byte-bounded response with shared evidence.
-
-The viewer's **Code** workspace brings briefing copy, module dependencies,
-declaration search, file outlines and verified source into one place.
-```sh
-cascade init --root /path/to/project
-cascade analyze --root /path/to/project
-cascade code briefing --root /path/to/project
-cascade code architecture --root /path/to/project
-cascade code context --root /path/to/project --query OrderService --max-bytes 16384
-cascade mcp --root /path/to/project
-cascade view --root /path/to/project
-```
-
-Source-backed MCP and viewer sessions check saved changes and refresh the
-analysis automatically. Queries wait for the required refresh; a failed build
-does not silently become a current answer. `--no-watch` serves the existing
-snapshot. Unsaved editor buffers are not inputs, and disconnected packs retain
-unknown freshness. Existing calibration gates still apply; automatic refresh
-never accepts a new baseline on your behalf.
-
-Structure comes from the selected Java, TypeScript and frontend analysis facts,
-not an all-language index. Missing relationships remain unknown; directory
-groups are structural summaries, not inferred business intent. Structure has
-its own digest and coverage and does not change the impact graph's edge grades.
-Context budgets count UTF-8 bytes, not model tokens. See
-[code intelligence and freshness](docs/code-intelligence.md) for the contract
-and the [0.9 walkthrough](docs/code-intelligence-demo.md) to try each feature.
-The [supported-language evaluation](docs/code-intelligence-evaluation.md)
-records checks on Java/JavaScript examples, Ghostfolio and Cascade itself.
+Use Cascade when an AI coding task needs both a place to start in the source
+and evidence about the consequences of an edit. Its structure tools support
+navigation; its impact tools connect application code to database usage.
+Read the reported scope and unresolved links alongside the answer, and inspect
+source where the selected analysis cannot establish a relationship.
 
 ## Supported stacks
 
