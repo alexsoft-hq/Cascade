@@ -10,6 +10,34 @@ Each dated section below is one round of work. The round protocol is in
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-19
+
+### Added
+
+- `cascade --version` prints the package version and exits without creating
+  project, registry or cache state. MCP reports the same version.
+- Real macOS Apple Silicon CI runs the full Node suite and required CLI e2e.
+  A shared npm tarball is installed and exercised on Linux x64 (including
+  Node 20/JDK 17), Windows x64 and macOS arm64; Intel macOS runs weekly and on
+  demand. Required installation stages and CLI e2e cannot pass by skipping.
+- Installed-package verification checks runtime assets and licenses, actual
+  CLI launchers, setup and recovery, all four analysis lanes and stdio MCP.
+  Explicit tag, candidate and public npm verification commands check release
+  identity without publishing or requiring development HEAD to equal npm latest.
+
+### Fixed
+
+- Setup and doctor require the exact sqlglot version shipped in requirements.
+  Managed environments with missing or mismatched parsers are repaired; failed
+  replacement restores the previous environment and preserves outside data;
+  if rollback fails, it preserves the backup and reports its recovery path.
+  User-selected `CASCADE_PYTHON` interpreters remain read-only and receive precise
+  mismatch and recovery instructions.
+- English and Korean installation guides distinguish execution support from
+  the actual CI matrix and document updates, reinstall and recovery.
+- Package verification isolates npm configuration, Python and Git settings;
+  CI pipelines retain failed test exit codes when output passes through `tee`.
+
 ## [0.9.0] - 2026-10-16
 
 ### Added
@@ -3996,7 +4024,10 @@ project generated with `--git`, which this round did not re-run.
   a badge pointing at a workflow nobody can fetch is worse than no badge. It
   goes in when the remote does.
 
-[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.10...HEAD
+[Unreleased]: https://github.com/alexsoft-hq/Cascade/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/alexsoft-hq/Cascade/compare/v0.9.0...v0.9.1
+[0.9.0]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.11...v0.9.0
+[0.8.11]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.10...v0.8.11
 [0.8.10]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.9...v0.8.10
 [0.8.9]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/alexsoft-hq/Cascade/compare/v0.8.7...v0.8.8
