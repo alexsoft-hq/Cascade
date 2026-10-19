@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mapper namespace="com.example.SmokeMapper">
+  <select id="find" resultType="string">SELECT title FROM smoke_items WHERE id = #{id}</select>
+</mapper>

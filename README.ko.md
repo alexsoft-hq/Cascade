@@ -183,6 +183,8 @@ WebSocket, 그리고 소스가 직접 선언한 라우트를 넘어서 앱 구�
 
 ```bash
 npm install -g @alexsoft-hq/cascade     # 명령 이름은 `cascade` 입니다
+cascade --version                       # 설치된 패키지 버전
+cascade setup                           # SQL 파서 준비
 cascade doctor                          # 그 밖에 빠진 것이 있으면 말해 줍니다
 ```
 
@@ -193,11 +195,13 @@ cascade doctor                          # 그 밖에 빠진 것이 있으면 말
 
 엔진 자체에는 **Node 20 이상**만 있으면 됩니다. 엔진과 서버에는 자체 npm
 의존성이 없으므로 패키지 바깥에서 받아 오는 것이 없습니다. macOS, Linux,
-Windows 세 곳 모두에서 CI 가 전체 테스트(끝까지 실행하는 e2e 포함)를 돌립니다.
+Windows 에서 실행을 지원합니다. CI 는 정해진 OS·아키텍처·런타임 조합을
+검사하며, 모든 조합을 측정했다는 뜻은 아닙니다. CI 구성과 패키지 검증 명령은
+[설치·업데이트·복구 안내](docs/ko/setup/installation.md)를 참고하세요.
 
-Windows 에서는 `cascade setup` 이 SQL 레인의 Python 을 `.venv\Scripts\python.exe` 에
-만들고, 실행도 거기서 찾습니다. JDK 는 `PATH` 의 `javac` 나 `JAVA_HOME` 아래의
-것을 씁니다.
+Windows 에서는 선택된 가상환경의 `Scripts\python.exe` 를 사용합니다.
+설치된 패키지는 `<cascade home>/venv`, 저장소 체크아웃은 `.venv` 에 만듭니다.
+JDK 는 `PATH` 의 `javac` 나 `JAVA_HOME` 아래의 것을 씁니다.
 
 Java 레인에는 **JDK 17 이상**이 필요합니다. 이 레인은 JDK 자체 컴파일러의 Tree
 API 를 파싱 전용으로 쓰므로 `javac` 와 `java` 면 충분합니다.
@@ -219,9 +223,10 @@ node bin/cascade.mjs setup
 ```
 
 `python3` 을 찾아서 실행이 실제로 들여다보는 자리에 가상환경을 만들고, 고정된
-requirements 를 설치한 뒤, 그 인터프리터로 `sqlglot` 을 직접 import 해서
-확인합니다. 이미 `sqlglot` 이 들어 있는 인터프리터가 있다면 `CASCADE_PYTHON` 으로
-가리키고 이 명령은 건너뛰면 됩니다.
+requirements 를 설치한 뒤, 실행할 인터프리터의 `sqlglot` 버전이 정확한지
+확인합니다. 관리 환경의 버전이 다르면 `setup` 이 복구합니다.
+`CASCADE_PYTHON` 으로 지정한 외부 인터프리터는 변경하지 않습니다. 그 환경에
+정확한 고정 버전을 직접 설치하거나, 변수를 해제하고 `setup` 을 실행하세요.
 
 웹 레인에는 **아무것도 필요하지 않습니다.** 파서가 `adapters/web/vendor/` 아래에
 동봉되어 있어서, 프런트엔드를 읽는 데 설치도 네트워크 호출도 없습니다.

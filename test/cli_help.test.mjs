@@ -19,6 +19,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { engineIdentity } from '../src/cli/env.mjs';
 import { COMMANDS, commandUsage, usageText } from '../src/cli/usage.mjs';
 
 const ENGINE_ROOT = fileURLToPath(new URL('../', import.meta.url));
@@ -49,6 +50,7 @@ function runIsolated(t, argv) {
     stderr: r.stderr ?? '',
     cwdEntries: fs.readdirSync(cwd).sort(),
     registryExists: fs.existsSync(registry),
+    homeEntries: fs.readdirSync(home).sort(),
   };
 }
 
@@ -117,4 +119,15 @@ test('a command section is a slice of the whole text, and every command has one'
     assert.ok(whole.includes(indented), `${cmd}'s section is not the text the whole usage carries`);
   }
   assert.equal(commandUsage('nonesuch'), null, 'a name the table does not carry has no section');
+});
+
+
+test('--version prints the engine identity and touches neither project nor tool home', (t) => {
+  const r = runIsolated(t, ['--version']);
+  assert.equal(r.exit, 0);
+  assert.equal(r.stdout, engineIdentity().version + '\n');
+  assert.deepEqual(r.homeEntries, []);
+  assert.equal(r.stderr, '');
+  assert.deepEqual(r.cwdEntries, []);
+  assert.equal(r.registryExists, false);
 });

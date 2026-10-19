@@ -12,6 +12,7 @@ import { buildDoctorReport, formatDoctorTable, jdkCandidateDirs } from '../../co
 import { cacheDir, registryPath } from '../../core/paths.mjs';
 import { readRegistry, projectIds } from '../../core/registry.mjs';
 import { ENGINE_ROOT, findJdk, sqlPython } from '../env.mjs';
+import { requiredSqlglot } from '../sql-install.mjs';
 
 /**
  * Run one probe and report BOTH failure modes apart.
@@ -37,7 +38,9 @@ function runOut(file, args, opts = {}) {
 
 /** The SQL lane's interpreter, and a reader for any module inside it. */
 function pythonProbes() {
-  const pyRes = sqlPython();
+  const pyRes = process.env.CASCADE_PYTHON
+    ? { ok: true, path: process.env.CASCADE_PYTHON, from: 'CASCADE_PYTHON' }
+    : sqlPython();
   const venvPy = pyRes.path;
   const python = pyRes.ok
     ? (() => { const r = runOut(venvPy, ['-V']); return { path: venvPy, from: pyRes.from, ok: r.ok, version: r.out, error: r.error }; })()
@@ -120,7 +123,7 @@ export function run(ctx) {
     node: { version: process.version },
     git: { ok: gitV.ok, version: gitV.out, error: gitV.error },
     python,
-    sqlglot: pyModule('sqlglot'),
+    sqlglot: { ...pyModule('sqlglot'), expectedVersion: requiredSqlglot(ENGINE_ROOT) },
     jdk: jdkProbe(),
     webParser: webParserProbe(),
     drivers: [

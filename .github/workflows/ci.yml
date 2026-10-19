@@ -1,10 +1,6 @@
-# CI — ten INDEPENDENT jobs:
-#   node · windows · lint · python · db · java · petclinic · dco · fixtures · gate
-#
-# There is no `needs:` between them and the node matrix does not fail fast, so a
-# missing or broken lane never hides the state of the others. Each job builds
-# what it needs itself rather than skipping on an existence check — a permanent
-# self-omission on a fresh clone would be a defect, not a pass.
+# Source/lane jobs remain independent. Only installed-package consumers depend
+# on package-candidate: every OS must test the SAME tarball, not a local repack.
+# Required end-to-end tests fail on skips; optional corpus tests are separate.
 #
 # `gate` is the one job that does NOT run on every push: it clones about a
 # gigabyte of other people's source. It runs weekly and on demand, which is the
@@ -25,6 +21,11 @@ on:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    # Explicit bash includes pipefail: tee must not hide a failing test process.
+    shell: bash
 
 jobs:
   node:
@@ -104,6 +105,121 @@ jobs:
         run: |
           node --test test/analyze_root.test.mjs test/web_lane_cli.test.mjs test/base_commit.test.mjs test/analyze_lock.test.mjs 2>&1 | tee cli.log
           grep -q 'skipped 0' cli.log || { echo 'an end-to-end CLI test SKIPPED on Windows: that is a failure, not a pass'; exit 1; }
+
+  macos:
+    name: macOS arm64 (node 22.x)
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: record the actual platform and tool versions
+        run: |
+          node -e "const os = require('node:os'); console.log({platform:process.platform, arch:process.arch, os:os.release(), node:process.version}); if(process.platform !== 'darwin' || process.arch !== 'arm64') process.exit(1)"
+          sw_vers
+          python --version
+          java -version
+          javac -version
+      - name: provision the required SQL lane
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --disable-pip-version-check -r adapters/sql/requirements.txt
+      - name: full Node suite
+        run: npm run test:quick
+      - name: required CLI end-to-end tests cannot skip
+        run: |
+          node --test test/analyze_root.test.mjs test/web_lane_cli.test.mjs test/base_commit.test.mjs test/analyze_lock.test.mjs 2>&1 | tee cli.log
+          grep -q 'skipped 0' cli.log || { echo 'a required CLI test skipped on macOS'; exit 1; }
+
+  package-candidate:
+    name: build one npm candidate
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.pack.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - name: package and lock versions, then pack
+        id: pack
+        run: node scripts/package-candidate.mjs --out artifact
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-candidate
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 7
+
+  package-smoke:
+    name: package ${{ matrix.os }} ${{ matrix.arch }} (node ${{ matrix.node }}, JDK ${{ matrix.java }})
+    needs: package-candidate
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, platform: linux, arch: x64, node: '20.x', java: '17' }
+          - { os: ubuntu-latest, platform: linux, arch: x64, node: '22.x', java: '21' }
+          - { os: windows-latest, platform: win32, arch: x64, node: '22.x', java: '21' }
+          - { os: macos-15, platform: darwin, arch: arm64, node: '22.x', java: '21' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ matrix.java }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-candidate
+          path: artifact
+      - name: require the advertised platform
+        run: node -e "console.log(process.platform,process.arch,process.version); if(process.platform !== '${{ matrix.platform }}' || process.arch !== '${{ matrix.arch }}') process.exit(1)"
+      - name: install and exercise the shared candidate outside checkout
+        run: node scripts/package-smoke.mjs --tarball artifact/candidate.tgz --expected-version ${{ needs.package-candidate.outputs.version }}
+
+  package-intel:
+    name: package macOS Intel (weekly/manual)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    needs: package-candidate
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: actions/download-artifact@v4
+        with:
+          name: npm-candidate
+          path: artifact
+      - name: require Intel macOS
+        run: node -e "console.log(process.platform,process.arch,process.version); if(process.platform !== 'darwin' || process.arch !== 'x64') process.exit(1)"
+      - name: installed-package smoke
+        run: node scripts/package-smoke.mjs --tarball artifact/candidate.tgz --expected-version ${{ needs.package-candidate.outputs.version }}
 
   # The linter. Its own job, with no `needs:`, like everything else here: a rule
   # violation is a five-second answer and must not wait behind a thirty-second

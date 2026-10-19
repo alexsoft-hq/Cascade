@@ -3629,13 +3629,17 @@
    ]
   },
   "src/cli/commands/setup.mjs": {
-   "maxLines": 74,
-   "maxBranches": 21,
+   "maxLines": 64,
+   "maxBranches": 20,
    "longest": "run",
    "branchiest": "run",
    "functions": [
+    "buildPinnedEnvironment",
+    "buildPinnedEnvironment/1",
+    "findBasePython",
     "run",
-    "sqlglotVersion"
+    "run/1",
+    "run/2"
    ]
   },
   "src/cli/commands/verify.mjs": {
@@ -4069,6 +4073,17 @@
     "viewerAssets",
     "viewerAssets/1",
     "viewerAssets/2"
+   ]
+  },
+  "src/cli/sql-install.mjs": {
+   "maxLines": 27,
+   "maxBranches": 7,
+   "longest": "replaceManagedVenv",
+   "branchiest": "replaceManagedVenv",
+   "functions": [
+    "probeSqlglot",
+    "replaceManagedVenv",
+    "requiredSqlglot"
    ]
   },
   "src/cli/state.mjs": {
@@ -4760,6 +4775,7 @@
     "majorOf",
     "optionalChecks",
     "requiredChecks",
+    "sqlglotCheck",
     "w",
     "w/1"
    ]
@@ -7536,6 +7552,17 @@
     "xmlViewEngineOf/1"
    ]
   },
+  "src/core/sql_requirements.mjs": {
+   "maxLines": 7,
+   "maxBranches": 2,
+   "longest": "sqlglotPin",
+   "branchiest": "sqlglotMatches",
+   "functions": [
+    "sqlglotMatches",
+    "sqlglotPin",
+    "sqlglotPin/1"
+   ]
+  },
   "src/core/structure.mjs": {
    "maxLines": 27,
    "maxBranches": 25,
@@ -8564,6 +8591,40 @@
     "readArgs",
     "readThrough",
     "summary"
+   ]
+  },
+  "src/packaging/npm_cli.mjs": {
+   "maxLines": 15,
+   "maxBranches": 7,
+   "longest": "npmCli",
+   "branchiest": "npmCli",
+   "functions": [
+    "npmCli",
+    "npmCli/1",
+    "npmCli/2"
+   ]
+  },
+  "src/packaging/package_smoke.mjs": {
+   "maxLines": 39,
+   "maxBranches": 23,
+   "longest": "readPackageTarball",
+   "branchiest": "readPackageTarball",
+   "functions": [
+    "readPackageTarball",
+    "readPackageTarball/1",
+    "str",
+    "validatePackageFiles",
+    "validatePackageFiles/1"
+   ]
+  },
+  "src/packaging/release_checks.mjs": {
+   "maxLines": 11,
+   "maxBranches": 15,
+   "longest": "packageIdentity",
+   "branchiest": "releaseSelection",
+   "functions": [
+    "packageIdentity",
+    "releaseSelection"
    ]
   },
   "src/viewer/chain_svg.mjs": {

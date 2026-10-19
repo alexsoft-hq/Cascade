@@ -24,7 +24,7 @@ const healthy = () => ({
   node: { version: 'v20.11.1' },
   git: { ok: true, version: 'git version 2.44.0' },
   python: { path: '/x/.venv/bin/python', ok: true, version: 'Python 3.12.2' },
-  sqlglot: { ok: true, version: '30.17.0' },
+  sqlglot: { ok: true, version: '30.17.0', expectedVersion: '30.17.0' },
   jdk: {
     candidates: [
       { dir: '/jh/bin', via: 'JAVA_HOME', javac: true, java: true },
@@ -213,4 +213,22 @@ test('the two commands a reader needs FIRST open the usage line: setup, then doc
   const names = line.replace(/^usage: cascade </, '').replace(/>.*$/, '').split('|');
   assert.equal(names[0], 'setup', `setup should open the list, got ${names.join('|')}`);
   assert.equal(names[1], 'doctor', `doctor should follow it, got ${names.join('|')}`);
+});
+
+
+test('sqlglot must match the exact requirements pin, with override-specific remedy', () => {
+  for (const version of ['30.16.0', undefined, '', 'unknown']) {
+    const probes = healthy();
+    probes.sqlglot.version = version;
+    const report = buildDoctorReport(probes);
+    assert.equal(byId(report, 'sqlglot').status, 'missing');
+    assert.equal(report.ok, false);
+    assert.match(byId(report, 'sqlglot').detail, /required 30\.17\.0/);
+    assert.match(byId(report, 'sqlglot').remedy, /cascade setup/);
+    probes.python.from = 'CASCADE_PYTHON';
+    assert.match(byId(buildDoctorReport(probes), 'sqlglot').remedy, /unset CASCADE_PYTHON/);
+  }
+  const missingPin = healthy();
+  delete missingPin.sqlglot.expectedVersion;
+  assert.equal(buildDoctorReport(missingPin).ok, false);
 });
