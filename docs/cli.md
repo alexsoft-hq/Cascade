@@ -12,6 +12,11 @@ and flags out of what it printed, and fails if any of them is missing here.
 exits 0, before any other flag on the line is read and before anything is
 resolved, discovered or written.
 
+`cascade --version` prints the installed package version and exits 0
+without creating a registry, cache or project files. Whole-program help
+(`cascade --help`, `-h`, `help`, or no arguments) prints usage to stderr and
+intentionally exits 2. See [installation and recovery](setup/installation.md).
+
 ## Exit codes
 
 | Code | Meaning |
@@ -78,8 +83,8 @@ Build the SQL lane's Python and install its pinned requirements, in one
 command, so reading a setup page is not what stands between you and your first
 answer. It finds a `python3`, creates a virtual environment where a run will
 look for one, installs `adapters/sql/requirements.txt`, and then **proves** it
-by importing `sqlglot` with the interpreter a run will actually use rather than
-trusting that `pip` said ok. Nothing outside that environment is touched.
+by importing `sqlglot` and checking its exact pinned version with the interpreter
+a run will actually use rather than trusting that `pip` said ok.
 
 Where it builds:
 
@@ -88,15 +93,19 @@ Where it builds:
 | a checkout of this repository (there is a `.git`) | `<engine>/.venv`, the path the setup pages and CI already name |
 | anything else, or `--home` | `<cascade home>/venv`, which survives an upgrade that replaces the package directory |
 
-- `--force` — remove an existing environment and build it again. Also the cure
-  when one exists but cannot import `sqlglot`.
+- `--force` — reinstall a managed environment even when its parser already matches
+  the pin. A missing, broken or mismatched parser is repaired without this flag.
+  Replacements retain a backup until verification succeeds and roll back on
+  failure; registry, cache and other data outside the venv are preserved.
 - `--home` — build in the tool home even inside a checkout.
 
 A run looks for the interpreter in three places, in this order: `CASCADE_PYTHON`
 when you set it, then the checkout's own `.venv`, then the tool home. Whichever
 is found first is the one every command uses, and `cascade doctor` prints which
-one that is. If you already have an interpreter with `sqlglot` in it, point
-`CASCADE_PYTHON` at it and skip this command entirely.
+one that is. When `CASCADE_PYTHON` is set, `setup` only validates that external
+interpreter. It never installs into or rebuilds it, even with `--force`. An exact
+parser pin succeeds; a missing or mismatched parser fails with installation
+instructions, or guidance to unset the override and use a managed environment.
 
 The Java lane's JDK is not something this command can supply: a JDK is not a
 Python package. `cascade doctor` names the directories it looked in.
@@ -112,7 +121,8 @@ one error at a time: Node's version, `git`, the SQL lane's venv and `sqlglot`,
 a JDK — naming which candidate directory won and why each of the others did not
 — the three optional DB drivers, Docker, the registry file and the cache
 directory. Each line carries a status (`ok` / `warn` / `missing`) and, when it
-is not ok, the remedy.
+is not ok, the remedy. The SQL parser check requires the exact version in
+`adapters/sql/requirements.txt`; merely importing another version is not enough.
 
 - `--json` — the whole report as `cascade:doctor:1` instead of the table.
 

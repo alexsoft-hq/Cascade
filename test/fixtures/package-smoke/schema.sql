@@ -1,0 +1,1 @@
+CREATE TABLE smoke_items (id INTEGER PRIMARY KEY, title VARCHAR(100));

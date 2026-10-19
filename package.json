@@ -43,6 +43,8 @@
   "scripts": {
     "test": "node --test --experimental-test-coverage test/*.test.mjs",
     "test:quick": "node --test test/*.test.mjs",
+    "test:package": "node scripts/package-smoke.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
     "lint": "eslint .",
     "doctor": "node bin/cascade.mjs doctor",
     "dco": "node scripts/check-dco.mjs"

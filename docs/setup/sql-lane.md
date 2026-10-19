@@ -28,8 +28,13 @@ node bin/cascade.mjs doctor      # tells you what is still missing, and the fix
 `setup` builds `<engine>/.venv` inside a checkout of this repository and
 `<cascade home>/venv` anywhere else, because an installed copy lives in a
 directory the next upgrade replaces. `--force` rebuilds one; `--home` puts it in
-the tool home even inside a checkout. Doing it by hand still works and is what
-`setup` runs for you:
+the tool home even inside a checkout. `setup` repairs a managed environment
+whose parser is missing, broken or at a different version; `--force` also
+reinstalls a matching environment. It verifies a replacement before discarding
+the backup, restores the previous environment on failure, and preserves data
+outside the venv. See [installation and recovery](installation.md).
+
+Doing it by hand still works:
 
 ```bash
 python3 -m venv .venv
@@ -39,7 +44,11 @@ python3 -m venv .venv
 On Windows the interpreter lands in `.venv\Scripts\python.exe`, and that is
 where a run looks for it there; the same two lines read
 `py -m venv .venv` and `.venv\Scripts\python.exe -m pip install -r adapters\sql\requirements.txt`.
-`CASCADE_PYTHON` names another interpreter on any platform.
+`CASCADE_PYTHON` names another interpreter on any platform. Both `setup` and
+`doctor` require its exact pinned sqlglot version. `setup` treats this external
+interpreter as read-only, including with `--force`: install the reported pin
+yourself using that interpreter's `-m pip`, or unset `CASCADE_PYTHON` and let
+`setup` manage an environment.
 
 The version is pinned in `adapters/sql/requirements.txt`, not chosen at install
 time. sqlglot ships often, and a different version parses some statements

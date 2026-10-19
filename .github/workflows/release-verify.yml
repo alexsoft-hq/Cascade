@@ -1,0 +1,44 @@
+name: verify selected release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to verify (for example v0.9.1); no tag is created'
+        type: string
+        default: ''
+      npm_version:
+        description: 'Exact public npm version to verify; leave empty for tag-only validation'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: verify the explicitly selected artifacts
+        env:
+          VERIFY_TAG: ${{ inputs.tag }}
+          VERIFY_NPM_VERSION: ${{ inputs.npm_version }}
+        run: |
+          args=()
+          if [ -n "$VERIFY_TAG" ]; then args+=(--tag "$VERIFY_TAG"); fi
+          if [ -n "$VERIFY_NPM_VERSION" ]; then args+=(--npm-version "$VERIFY_NPM_VERSION"); fi
+          npm run verify:release -- "${args[@]}"

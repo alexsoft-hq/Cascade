@@ -18,6 +18,8 @@
 // lane) and `scripts/ci-java-smoke.mjs` both walk it, so what doctor reports is
 // what `analyze` will do rather than a second opinion about it.
 
+import { sqlglotMatches } from './sql_requirements.mjs';
+
 /** Schema identifier for the `--json` report (SPEC §18.1). */
 export const DOCTOR_SCHEMA = 'cascade:doctor:1';
 
@@ -67,8 +69,8 @@ function majorOf(version) {
  * @param {{
  *   node?: {version?:string},
  *   git?: {ok?:boolean, version?:string, error?:string},
- *   python?: {path?:string, ok?:boolean, version?:string, error?:string},
- *   sqlglot?: {ok?:boolean, version?:string, error?:string},
+ *   python?: {path?:string, from?:string, ok?:boolean, version?:string, error?:string},
+ *   sqlglot?: {ok?:boolean, version?:string, expectedVersion?:string, error?:string},
  *   jdk?: {candidates?:{dir:string, via:string, javac:boolean, java:boolean}[],
  *          chosen?:{javac:string, java:string, via:string}|null,
  *          version?:string, error?:string},
@@ -125,16 +127,24 @@ function requiredChecks(probes, checks) {
     probes.python?.ok ? null : 'run `cascade setup`, which builds it and installs the pinned requirements. Or set CASCADE_PYTHON to an interpreter that already has sqlglot (docs/setup/sql-lane.md)',
   ));
 
-  // ---- sqlglot ------------------------------------------------------------
-  checks.push(check(
-    'sqlglot', 'sqlglot importable (SQL lane)', true,
-    probes.sqlglot?.ok ? 'ok' : 'missing',
-    probes.sqlglot?.ok ? `sqlglot ${probes.sqlglot.version ?? '(version not reported)'}`
-      : (probes.sqlglot?.error ?? 'import failed'),
-    probes.sqlglot?.ok ? null : 'run `cascade setup --force`, which rebuilds the interpreter and installs the pinned requirements (docs/setup/sql-lane.md)',
-  ));
+  checks.push(sqlglotCheck(probes));
 
   laneChecks(probes, checks);
+}
+
+function sqlglotCheck(probes) {
+  const expected = probes.sqlglot?.expectedVersion;
+  const sqlOk = sqlglotMatches(probes.sqlglot, expected);
+  const externalPython = probes.python?.from?.startsWith('CASCADE_PYTHON');
+  return check(
+    'sqlglot', 'sqlglot pinned version (SQL lane)', true,
+    sqlOk ? 'ok' : 'missing',
+    probes.sqlglot?.ok ? `sqlglot ${probes.sqlglot.version || '(version not reported)'}; required ${expected || '(pin not reported)'}`
+      : (probes.sqlglot?.error ?? 'import failed'),
+    sqlOk ? null : externalPython
+      ? `install sqlglot==${expected || '<pinned version>'} into CASCADE_PYTHON yourself, or unset CASCADE_PYTHON and run \`cascade setup\`. The external interpreter is not modified (docs/setup/sql-lane.md)`
+      : 'run `cascade setup`, which repairs the managed interpreter with the pinned requirements; use --force to reinstall a matching environment (docs/setup/sql-lane.md)',
+  );
 }
 
 /**

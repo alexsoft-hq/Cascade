@@ -187,6 +187,8 @@ beyond the routes the source itself declares.
 
 ```bash
 npm install -g @alexsoft-hq/cascade     # the command is `cascade`
+cascade --version                       # installed package version
+cascade setup                           # prepare the SQL parser
 cascade doctor                          # says what else, if anything, is missing
 ```
 
@@ -197,12 +199,14 @@ anything.
 
 **Node 20 or newer** for the engine itself, and nothing else. The engine and its
 servers have no npm dependencies of their own, so nothing is fetched beyond the
-package. macOS, Linux and Windows: the suite runs on all three in CI, the
-end-to-end runs included.
+package. Execution is supported on macOS, Linux and Windows. CI checks specific
+OS, architecture and runtime combinations; that is not a claim that every
+combination has been measured. See [installation, updates and recovery](docs/setup/installation.md)
+for the CI matrix and package verification commands.
 
-On Windows, `cascade setup` builds the SQL lane's Python at `.venv\Scripts\python.exe`
-and that is where a run looks for it; the JDK is whatever `javac` is on `PATH`
-or under `JAVA_HOME`.
+On Windows, `cascade setup` uses `Scripts\python.exe` inside the selected
+virtual environment (`<cascade home>/venv` for an installed package, `.venv` in
+a checkout); the JDK is whatever `javac` is on `PATH` or under `JAVA_HOME`.
 
 **A JDK 17 or newer** for the Java lane. The lane uses the JDK's own compiler
 Tree API in parse-only mode, so `javac` and `java` are all it wants:
@@ -224,9 +228,11 @@ node bin/cascade.mjs setup
 ```
 
 It finds a `python3`, builds the virtual environment where a run looks for one,
-installs the pinned requirements, and proves it by importing `sqlglot` with the
-interpreter a run will actually use. If you already have an interpreter with
-`sqlglot` in it, point `CASCADE_PYTHON` at it and skip the command.
+installs the pinned requirements, and verifies the exact `sqlglot` version with
+the interpreter a run will actually use. A managed environment with a mismatched
+version is repaired by `setup`. An interpreter selected by `CASCADE_PYTHON` is
+read-only to Cascade: install the exact pin there yourself, or unset the override
+and run `setup`.
 
 **Nothing at all for the web lane.** Its parser is vendored under
 `adapters/web/vendor/`, so reading a frontend needs no install and makes no

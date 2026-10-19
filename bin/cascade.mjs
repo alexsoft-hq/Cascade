@@ -27,6 +27,7 @@
 //   export        one Flow or Impact answer as an HTML file   docs/viewer.md
 //   diff          what changed between two packs              docs/cli.md
 
+import { engineIdentity } from '../src/cli/env.mjs';
 import { wantsHelp } from '../src/cli/args.mjs';
 import { makeContext } from '../src/cli/context.mjs';
 import { COMMANDS, commandUsage, usageText } from '../src/cli/usage.mjs';
@@ -56,6 +57,10 @@ const DISPATCH = Object.freeze({
 });
 
 const argv = process.argv.slice(2);
+if (argv.length === 1 && argv[0] === '--version') {
+  process.stdout.write(engineIdentity().version + '\n');
+  process.exit(0);
+}
 const cmd = argv[0];
 const known = Object.prototype.hasOwnProperty.call(DISPATCH, cmd);
 

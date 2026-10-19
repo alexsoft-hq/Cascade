@@ -8,85 +8,116 @@
 // PROVE it by importing sqlglot rather than trusting that pip said ok.
 //
 // It never touches a system interpreter's packages: everything goes inside the
-// environment it creates, and `--force` is the only way to replace one.
+// environment it creates; mismatched managed environments are repaired.
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { sqlVenvTarget, venvPython } from '../../core/paths.mjs';
 import { ENGINE_ROOT, sqlPython } from '../env.mjs';
+import { requiredSqlglot, probeSqlglot, replaceManagedVenv } from '../sql-install.mjs';
+import { sqlglotMatches } from '../../core/sql_requirements.mjs';
 
-export function run(ctx) {
+export function run(ctx, io = {}) {
   const { flag, die } = ctx;
-  const already = sqlPython();
-  const isCheckout = fs.existsSync(path.join(ENGINE_ROOT, '.git'));
+  // Process edges are injectable so repair and rollback can be tested on every
+  // platform without launching executable fixtures or downloading packages.
+  const execute = io.execute ?? execFileSync;
+  const probeVersion = io.probeVersion ?? probeSqlglot;
+  const write = io.write ?? ((text) => process.stdout.write(text));
+  const exit = io.exit ?? ((code) => process.exit(code));
+  const env = io.env ?? process.env;
+  const engineRoot = io.engineRoot ?? ENGINE_ROOT;
+  const resolvePython = io.resolvePython ?? sqlPython;
+  const isCheckout = fs.existsSync(path.join(engineRoot, '.git'));
   const target = flag('home')
-    ? sqlVenvTarget({ engineRoot: ENGINE_ROOT, isCheckout: false })
-    : sqlVenvTarget({ engineRoot: ENGINE_ROOT, isCheckout });
+    ? sqlVenvTarget({ engineRoot, env, isCheckout: false })
+    : sqlVenvTarget({ engineRoot, env, isCheckout });
   const targetPy = venvPython(target);
-  const req = path.join(ENGINE_ROOT, 'adapters', 'sql', 'requirements.txt');
+  const req = path.join(engineRoot, 'adapters', 'sql', 'requirements.txt');
 
-  const sqlglotVersion = (py) => {
-    try {
-      return execFileSync(py, ['-c', 'import sqlglot; print(sqlglot.__version__)'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').trim();
-    } catch { return null; }
-  };
-
-  // Already done means: the interpreter a run would PICK is the one this
-  // command would build, and it works. `--home` naming a different place, or a
-  // resolved candidate that is not the target, is a reason to build.
-  const targetIsWhatRunsWould = already.ok && path.resolve(already.path) === path.resolve(targetPy);
-  if (targetIsWhatRunsWould && !flag('force')) {
-    const v = sqlglotVersion(already.path);
-    if (v) {
-      process.stdout.write(`the SQL lane is already set up: ${already.path} (${already.from}), sqlglot ${v}\n`);
-      process.stdout.write('pass --force to build it again\n');
-      process.exit(0);
+  const expectedVersion = requiredSqlglot(engineRoot);
+  if (env.CASCADE_PYTHON) {
+    const probe = probeVersion(env.CASCADE_PYTHON);
+    if (!sqlglotMatches(probe, expectedVersion)) {
+      die(`CASCADE_PYTHON selects ${env.CASCADE_PYTHON}: ${probe.error || `sqlglot ${probe.version || 'version unknown'}`}; required sqlglot ${expectedVersion}. `
+        + `Install sqlglot==${expectedVersion} into that interpreter yourself, or unset CASCADE_PYTHON and run \`cascade setup\`. The override was not modified.`);
+      return;
     }
-    process.stdout.write(`${already.path} exists but cannot import sqlglot, so it is being rebuilt\n`);
+    write(`the SQL lane is already set up: ${env.CASCADE_PYTHON} (CASCADE_PYTHON), sqlglot ${probe.version}\n`);
+    return exit(0);
   }
 
-  // A python3 to build WITH. Never the one being built.
-  let base = null;
-  for (const cand of [process.env.CASCADE_PYTHON3, 'python3', 'python'].filter(Boolean)) {
-    try {
-      const v = execFileSync(cand, ['-c', 'import sys; print("%d.%d" % sys.version_info[:2])'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString('utf8').trim();
-      if (/^3\.(\d+)$/.test(v)) { base = { cmd: cand, version: v }; break; }
-    } catch { /* try the next spelling */ }
+  // Reuse only the pinned version, even when the interpreter can import it.
+  const probe = probeVersion(targetPy);
+  if (sqlglotMatches(probe, expectedVersion) && !flag('force')) {
+    write(`the SQL lane is already set up: ${targetPy}, sqlglot ${probe.version}\n`);
+    write('pass --force to build it again\n');
+    const selected = resolvePython();
+    if (selected.ok && path.resolve(selected.path) !== path.resolve(targetPy)) {
+      write(`note: a run will still prefer ${selected.path} (${selected.from}), which comes first\n`);
+    }
+    return exit(0);
   }
+
+  const base = findBasePython({ env, execute });
   if (!base) {
-    die('no python3 on PATH to build the SQL lane with. Install one (macOS: `brew install python`; Debian or Ubuntu: `sudo apt-get install python3 python3-venv`), '
+    return die('no python3 on PATH to build the SQL lane with. Install one (macOS: `brew install python`; Debian or Ubuntu: `sudo apt-get install python3 python3-venv`), '
       + 'or set CASCADE_PYTHON to an interpreter that already has sqlglot and skip this command');
   }
 
-  if (flag('force') && fs.existsSync(target)) {
-    process.stdout.write(`removing ${target}\n`);
-    fs.rmSync(target, { recursive: true, force: true });
-  }
-  process.stdout.write(`building ${target} with ${base.cmd} (python ${base.version})…\n`);
+  write(`building ${target} with ${base.cmd} (python ${base.version})…\n`);
+  let version;
   try {
-    fs.mkdirSync(path.dirname(target), { recursive: true });
-    execFileSync(base.cmd, ['-m', 'venv', target], { stdio: ['ignore', 'inherit', 'inherit'] });
+    version = buildPinnedEnvironment({ target, targetPy, req, expectedVersion, engineRoot, base }, { execute, write, probeVersion });
   } catch (e) {
-    die(`could not create a virtual environment at ${target}: ${(e && e.message) || e}. `
-      + 'On Debian or Ubuntu the venv module ships separately: `sudo apt-get install python3-venv`');
+    die(`${e.message}. Setup failed; any previous managed environment was restored unless rollback failed as reported above.`);
+    return;
   }
-  process.stdout.write(`installing ${path.relative(ENGINE_ROOT, req)}…\n`);
-  try {
-    execFileSync(targetPy, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', req], { stdio: ['ignore', 'inherit', 'inherit'] }); // pip through the interpreter just built: the one place it is on every platform
-  } catch (e) {
-    die(`the requirements did not install into ${target}: ${(e && e.message) || e}`);
-  }
-
-  // Proof, not a claim: the lane's own import, run by the interpreter a run
-  // will actually use.
-  const version = sqlglotVersion(targetPy);
-  if (!version) die(`${targetPy} was built but cannot import sqlglot. Try \`cascade setup --force\`, and see docs/setup/sql-lane.md`);
-  const now = sqlPython();
-  process.stdout.write(`ready: ${targetPy}, sqlglot ${version}\n`);
+  const now = resolvePython();
+  write(`ready: ${targetPy}, sqlglot ${version}\n`);
   if (now.ok && path.resolve(now.path) !== path.resolve(targetPy)) {
-    process.stdout.write(`note: a run will still prefer ${now.path} (${now.from}), which comes first\n`);
+    write(`note: a run will still prefer ${now.path} (${now.from}), which comes first\n`);
   }
-  process.stdout.write('next: `cascade doctor` to check every prerequisite, then `cascade init --root <your project>`\n');
-  process.exit(0);
+  write('next: `cascade doctor` to check every prerequisite, then `cascade init --root <your project>`\n');
+  exit(0);
+}
+
+
+function findBasePython({ env, execute }) {
+  // A Python to build with; probing a candidate does not mutate its packages.
+  for (const cmd of [env.CASCADE_PYTHON3, 'python3', 'python'].filter(Boolean)) {
+    try {
+      const version = execute(cmd, ['-c', 'import sys; print("%d.%d" % sys.version_info[:2])'], {
+        stdio: ['ignore', 'pipe', 'ignore'], timeout: 15000,
+      }).toString('utf8').trim();
+      if (/^3\.(\d+)$/.test(version)) return { cmd, version };
+    } catch { /* try the next spelling */ }
+  }
+  return null;
+}
+
+function buildPinnedEnvironment({ target, targetPy, req, expectedVersion, engineRoot, base }, { execute, write, probeVersion }) {
+  let version;
+  replaceManagedVenv(target, () => {
+    try {
+      execute(base.cmd, ['-m', 'venv', target], { stdio: ['ignore', 'inherit', 'inherit'], timeout: 60000 });
+    } catch (e) {
+      throw new Error(`could not create a virtual environment at ${target}: ${e.message}. On Debian or Ubuntu install python3-venv`, { cause: e });
+    }
+    write(`installing ${path.relative(engineRoot, req)}…\n`);
+    try {
+      execute(targetPy, ['-m', 'pip', 'install', '--disable-pip-version-check', '-r', req], {
+        stdio: ['ignore', 'inherit', 'inherit'], timeout: 180000,
+      });
+    } catch (e) {
+      throw new Error(`the requirements did not install into ${target}: ${e.message}`, { cause: e });
+    }
+    const installed = probeVersion(targetPy);
+    if (!sqlglotMatches(installed, expectedVersion)) {
+      throw new Error(`${targetPy}: ${installed.error || `sqlglot ${installed.version || 'version unknown'}`}; required sqlglot ${expectedVersion}`);
+    }
+    version = installed.version;
+  });
+  return version;
 }
